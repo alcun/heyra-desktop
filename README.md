@@ -23,7 +23,8 @@ words never leave the machine. No account, no subscription.
    - set Keyboard → Press 🌐 key to → **Do nothing**, so fn doesn't also open emoji
 4. Click into any text box, hold fn, say something, let go.
 
-Heyra lives in the menu bar. Open it from there to see your history.
+Heyra lives in the menu bar and as a small dark dot at the bottom of the screen. Click
+the dot, or use the menu bar, to open your history and settings.
 
 ## What it does
 
@@ -31,6 +32,8 @@ Heyra lives in the menu bar. Open it from there to see your history.
   listening. Let go and the text is pasted in, and your clipboard text is put back.
   Pressing another key while holding fn (fn+arrow, fn+delete) cancels the take.
 - **Fast.** Six seconds of speech becomes text in about 0.4 s on an M-series Mac.
+- **Light.** About 2% of one CPU core at rest and 5% while you talk. The model stays
+  loaded (about 1.3 GB of memory) so it's ready the moment you press fn.
 - **History.** Every take is kept on your Mac. Click one to copy it again.
 - **Dictionary.** Fix words it mishears: `a cappy bar => capybara`.
 - **Any microphone.** Pick one in Settings.
