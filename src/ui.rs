@@ -710,7 +710,7 @@ fn ghost(window: &Window) {
 }
 
 impl Render for Pill {
-    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let (phase, level) = {
             let s = self.state.lock().unwrap();
             (s.phase, s.level)
@@ -725,7 +725,7 @@ impl Render for Pill {
         let rate = if target > self.smooth { 0.4 } else { 0.08 };
         self.smooth += (target - self.smooth) * rate;
 
-        let pixels = (ORB_BOX * window.scale_factor()) as usize;
+        let pixels = ORB_BOX as usize;
         let style = crate::orb::Style { voice: self.smooth, writing: !listening };
         let bgra = crate::orb::render(pixels, self.clock, &style);
         let frame = image::Frame::new(

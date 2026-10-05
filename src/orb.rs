@@ -3,9 +3,10 @@
 //! globe, warped by flowing turbulence; the limb dissolves into a lit haze and the
 //! silhouette itself drifts. Voice stirs and brightens it; writing turns it gold.
 //!
+//! Rendered at screen points, not retina pixels: the clouds are soft, so the GPU's
+//! upscale costs nothing visible and the frame is a quarter of the work.
+//!
 //! Output is BGRA with straight alpha, which is what GPUI's sprite atlas takes.
-
-use rayon::prelude::*;
 
 type V3 = [f32; 3];
 
@@ -151,7 +152,7 @@ pub fn render(size: usize, t: f32, style: &Style) -> Vec<u8> {
 
     let px = 2.0 / size as f32;
     let mut out = vec![0u8; size * size * 4];
-    out.par_chunks_mut(size * 4).enumerate().for_each(|(j, row)| {
+    out.chunks_mut(size * 4).enumerate().for_each(|(j, row)| {
         let y = (j as f32 + 0.5) * px - 1.0;
         for i in 0..size {
             let x = (i as f32 + 0.5) * px - 1.0;
