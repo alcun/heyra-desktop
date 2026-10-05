@@ -27,8 +27,8 @@ Heyra lives in the menu bar. Open it from there to see your history.
 
 ## What it does
 
-- **Push to talk.** Hold fn. A small gauge on the right edge of the screen shows it's
-  listening. Let go and the text is pasted in, and your clipboard text is put back.
+- **Push to talk.** Hold fn. A glowing orb shows it.s
+  listening, at the bottom of the screen. Let go and the text is pasted in, and your clipboard text is put back.
   Pressing another key while holding fn (fn+arrow, fn+delete) cancels the take.
 - **Fast.** Six seconds of speech becomes text in about 0.4 s on an M-series Mac.
 - **History.** Every take is kept on your Mac. Click one to copy it again.

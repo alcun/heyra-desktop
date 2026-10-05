@@ -5,7 +5,7 @@
 mod engine;
 mod hotkey;
 mod model;
-mod orb;
+mod gpu_orb;
 mod paste;
 mod record;
 mod setup;
@@ -18,7 +18,7 @@ use std::borrow::Cow;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use gpui::{App, Application, WindowHandle};
+use gpui::{App, Application};
 
 use engine::{Engine, Parakeet};
 use worker::{Cmd, Phase};
@@ -70,15 +70,69 @@ fn preview_gauge(state: worker::Shared) {
         });
     }
     Application::new().run(move |cx: &mut App| {
-        ui::open_pill(cx, state.clone());
+        let mut orb = OrbDriver::new();
         cx.spawn(async move |cx| loop {
-            cx.background_executor().timer(Duration::from_millis(33)).await;
-            if cx.update(|cx| cx.refresh_windows()).is_err() {
+            cx.background_executor().timer(Duration::from_millis(16)).await;
+            let (phase, level) = {
+                let s = state.lock().unwrap();
+                (s.phase, s.level)
+            };
+            if cx.update(|_| orb.tick(phase, level)).is_err() {
                 break;
             }
         })
         .detach();
     });
+}
+
+/// Eases the voice and integrates the orb's clocks, then draws a frame.
+/// Talking winds the shells up; writing releases them outward.
+struct OrbDriver {
+    overlay: Option<gpu_orb::Overlay>,
+    last: std::time::Instant,
+    clock: f32,
+    wave: f32,
+    twist: f32,
+    smooth: f32,
+    writing: f32,
+}
+
+impl OrbDriver {
+    fn new() -> Self {
+        let overlay = gpu_orb::Overlay::new().map_err(|e| store::log(&format!("orb: {e}"))).ok();
+        Self { overlay, last: std::time::Instant::now(), clock: 0.0, wave: 0.0, twist: 1.0, smooth: 0.0, writing: 0.0 }
+    }
+
+    fn tick(&mut self, phase: Phase, level: f32) {
+        let Some(overlay) = self.overlay.as_mut() else { return };
+        let now = std::time::Instant::now();
+        let dt = now.duration_since(self.last).as_secs_f32().min(0.1);
+        self.last = now;
+        let listening = phase == Phase::Listening;
+        let writing = phase == Phase::Transcribing;
+        if !listening && !writing {
+            overlay.hide();
+            self.smooth = 0.0;
+            return;
+        }
+        overlay.show();
+        let target = if listening { (level * 1.25).min(1.0) } else { 0.0 };
+        let rate = if target > self.smooth { 0.35 } else { 0.07 };
+        self.smooth += (target - self.smooth) * rate;
+        self.writing += ((if writing { 1.0 } else { 0.0 }) - self.writing) * 0.12;
+        let twist_target = if writing { 0.35 } else { 1.0 + 1.6 * self.smooth };
+        self.twist += (twist_target - self.twist) * 0.08;
+        self.wave += dt * (if writing { 3.2 } else { 0.6 + 2.0 * self.smooth });
+        self.clock += dt * (0.8 + 1.2 * self.smooth);
+        overlay.draw(gpu_orb::Uniforms {
+            time: self.clock,
+            voice: self.smooth,
+            wave: self.wave,
+            twist: self.twist,
+            writing: self.writing,
+            ..Default::default()
+        });
+    }
 }
 
 fn main() {
@@ -87,19 +141,33 @@ fn main() {
         return transcribe_file(&args[2]);
     }
     if args.len() == 4 && args[1] == "--orb-png" {
-        // `heyra --orb-png out.png <voice 0..1 | writing>`: one orb frame, timed.
-        let style = orb::Style {
-            voice: args[3].parse().unwrap_or(0.0),
-            writing: args[3] == "writing",
+        // `heyra --orb-png out.png <voice 0..1 | writing>`: one GPU orb frame, timed.
+        let gpu = gpu_orb::Gpu::new().expect("metal");
+        let writing = args[3] == "writing";
+        let voice: f32 = args[3].parse().unwrap_or(0.0);
+        let size = 340u64;
+        let u = gpu_orb::Uniforms {
+            res: [size as f32, size as f32],
+            time: 3.7,
+            voice,
+            wave: 2.1,
+            twist: if writing { 0.4 } else { 1.0 + 1.5 * voice },
+            writing: if writing { 1.0 } else { 0.0 },
+            pad: 0.0,
         };
-        let size = 300;
         let started = std::time::Instant::now();
-        let mut bgra = orb::render(size, 2.3, &style);
+        let mut px = gpu.snapshot(size, &u);
         eprintln!("frame in {:.1} ms", started.elapsed().as_secs_f32() * 1000.0);
-        for px in bgra.chunks_mut(4) {
-            px.swap(0, 2);
+        for p in px.chunks_mut(4) {
+            p.swap(0, 2);
+            let a = p[3] as f32 / 255.0;
+            if a > 0.0 {
+                for c in &mut p[..3] {
+                    *c = ((*c as f32 / a).min(255.0)) as u8;
+                }
+            }
         }
-        image::RgbaImage::from_raw(size as u32, size as u32, bgra).unwrap().save(&args[2]).unwrap();
+        image::RgbaImage::from_raw(size as u32, size as u32, px).unwrap().save(&args[2]).unwrap();
         return;
     }
     if args.len() == 2 && args[1] == "--fetch-model" {
@@ -186,15 +254,20 @@ fn main() {
         let main_state = state.clone();
         let main_tx = tx.clone();
 
-        // Redraw ~30 times a second, and show the pill while listening or writing.
+        // Redraw the window ~30 times a second; drive the orb at ~60.
         let state = state.clone();
+        let mut orb = OrbDriver::new();
+        let mut frame = 0u32;
         cx.spawn(async move |cx| {
-            let mut pill: Option<WindowHandle<ui::Pill>> = None;
             loop {
-                cx.background_executor().timer(Duration::from_millis(33)).await;
-                let phase = state.lock().unwrap().phase;
-                let busy = matches!(phase, Phase::Listening | Phase::Transcribing);
+                cx.background_executor().timer(Duration::from_millis(16)).await;
+                frame = frame.wrapping_add(1);
+                let (phase, level) = {
+                    let s = state.lock().unwrap();
+                    (s.phase, s.level)
+                };
                 let ok = cx.update(|cx| {
+                    orb.tick(phase, level);
                     match tray.as_ref().and_then(|t| t.poll()) {
                         Some(tray::Action::Open) => {
                             let existing = cx.windows().into_iter().find_map(|w| w.downcast::<ui::Main>());
@@ -209,15 +282,9 @@ fn main() {
                         Some(tray::Action::Quit) => cx.quit(),
                         None => {}
                     }
-                    match (&pill, busy) {
-                        (None, true) => pill = ui::open_pill(cx, state.clone()),
-                        (Some(handle), false) => {
-                            let _ = handle.update(cx, |_, window, _| window.remove_window());
-                            pill = None;
-                        }
-                        _ => {}
+                    if frame % 2 == 0 {
+                        cx.refresh_windows();
                     }
-                    cx.refresh_windows();
                 });
                 if ok.is_err() {
                     break;

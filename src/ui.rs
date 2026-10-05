@@ -10,7 +10,7 @@ use std::time::Instant;
 use chrono::{Local, TimeZone};
 use gpui::{
     AnyElement, App, Bounds, Context, Div, FontWeight, Hsla, SharedString, Stateful, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind, WindowOptions, div, point,
+    WindowBounds, WindowOptions, div, point,
     prelude::*, px, rgb, size,
 };
 
@@ -644,104 +644,5 @@ impl Render for Main {
                     .pb_8()
                     .child(div().w_full().min_w_0().max_w(px(720.)).child(page)),
             )
-    }
-}
-
-// ---- the orb: Heyra's presence on the right edge while you talk ----
-//
-// Drawn per pixel by `orb.rs` (a dark glass sphere with ribbons of light inside)
-// and handed to GPUI as an image each frame. Voice is eased so it breathes.
-
-pub struct Pill {
-    state: Shared,
-    last: Instant,
-    clock: f32,
-    smooth: f32,
-    prev: Option<std::sync::Arc<gpui::RenderImage>>,
-}
-
-const ORB_BOX: f32 = 140.;
-
-pub fn open_pill(cx: &mut App, state: Shared) -> Option<WindowHandle<Pill>> {
-    let orb = size(px(ORB_BOX), px(ORB_BOX));
-    let display = cx.primary_display()?.bounds();
-    let origin = point(
-        display.origin.x + display.size.width - orb.width - px(4.),
-        display.origin.y + (display.size.height - orb.height) / 2.,
-    );
-    let handle = cx
-        .open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds { origin, size: orb })),
-                titlebar: None,
-                focus: false,
-                show: true,
-                kind: WindowKind::PopUp,
-                is_movable: false,
-                is_resizable: false,
-                is_minimizable: false,
-                window_background: WindowBackgroundAppearance::Transparent,
-                ..Default::default()
-            },
-            |_, cx| {
-                cx.new(|_| Pill { state, last: Instant::now(), clock: 0.0, smooth: 0.0, prev: None })
-            },
-        )
-        .ok()?;
-    let _ = handle.update(cx, |_, window, _| ghost(window));
-    Some(handle)
-}
-
-/// No window shadow (it outlines the glow in white) and clicks pass straight through.
-#[allow(unexpected_cfgs)]
-fn ghost(window: &Window) {
-    use objc::runtime::{NO, Object, YES};
-    use objc::{msg_send, sel, sel_impl};
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    let Ok(handle) = HasWindowHandle::window_handle(window) else { return };
-    if let RawWindowHandle::AppKit(appkit) = handle.as_raw() {
-        unsafe {
-            let view = appkit.ns_view.as_ptr() as *mut Object;
-            let native: *mut Object = msg_send![view, window];
-            let _: () = msg_send![native, setHasShadow: NO];
-            let _: () = msg_send![native, setIgnoresMouseEvents: YES];
-        }
-    }
-}
-
-impl Render for Pill {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let (phase, level) = {
-            let s = self.state.lock().unwrap();
-            (s.phase, s.level)
-        };
-        let now = Instant::now();
-        let dt = now.duration_since(self.last).as_secs_f32().min(0.1);
-        self.last = now;
-        self.clock += dt;
-        let listening = phase == Phase::Listening;
-        // Ease toward the voice: quick to rise, slow to settle.
-        let target = if listening { (level * 1.25).min(1.0) } else { 0.0 };
-        let rate = if target > self.smooth { 0.4 } else { 0.08 };
-        self.smooth += (target - self.smooth) * rate;
-
-        let pixels = ORB_BOX as usize;
-        let style = crate::orb::Style { voice: self.smooth, writing: !listening };
-        let bgra = crate::orb::render(pixels, self.clock, &style);
-        let frame = image::Frame::new(
-            image::RgbaImage::from_raw(pixels as u32, pixels as u32, bgra).expect("orb frame size"),
-        );
-        let image = std::sync::Arc::new(gpui::RenderImage::new([frame]));
-        let old = self.prev.replace(image.clone());
-        gpui::canvas(
-            |_, _, _| {},
-            move |bounds, _, window, _| {
-                if let Some(old) = old {
-                    let _ = window.drop_image(old);
-                }
-                let _ = window.paint_image(bounds, gpui::Corners::default(), image, 0, false);
-            },
-        )
-        .size_full()
     }
 }
