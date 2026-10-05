@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 pub const NAME: &str = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
-const SHA256: &str = "PENDING";
+const SHA256: &str = "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf";
 const FILES: [&str; 4] = ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"];
 
 /// Our mirror first, then the sherpa-onnx release it was copied from.
