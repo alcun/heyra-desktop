@@ -1,125 +1,22 @@
-//! Heyra: hold fn (or squeeze a TING) and talk; let go and the words are
-//! pasted where your cursor is. Speech is turned into text on this machine with
+//! Heyra: hold fn (or squeeze a TING) and talk; let go and the words are pasted
+//! where your cursor is. Speech is turned into text on this machine with
 //! Parakeet, the model Heyra uses. Nothing leaves it.
 
 mod engine;
 mod hotkey;
 mod paste;
 mod record;
+mod store;
+mod ui;
+mod worker;
 
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use gpui::{
-    App, Application, Bounds, Context, SharedString, Window, WindowBounds, WindowOptions, div,
-    prelude::*, px, rgb, size,
-};
+use gpui::{App, Application, WindowHandle};
 
 use engine::{Engine, Parakeet};
-use hotkey::Key;
-
-#[derive(Clone)]
-struct Status {
-    line: SharedString,
-    last: SharedString,
-    listening: bool,
-}
-
-type Shared = Arc<Mutex<Status>>;
-
-fn set(status: &Shared, line: impl Into<SharedString>) {
-    status.lock().unwrap().line = line.into();
-}
-
-/// Loads the model, then turns key presses into recordings into pasted text.
-fn run(status: Shared, keys: mpsc::Receiver<Key>) {
-    set(&status, "Loading Parakeet…");
-    let started = std::time::Instant::now();
-    let mut engine: Box<dyn Engine> = match Parakeet::load(&Parakeet::default_dir()) {
-        Ok(engine) => Box::new(engine),
-        Err(e) => return set(&status, e),
-    };
-    let load_time = started.elapsed();
-    let recorder = match record::Recorder::open() {
-        Ok(recorder) => recorder,
-        Err(e) => return set(&status, e),
-    };
-    let ready = format!(
-        "Ready: hold fn and talk · {} · model loaded in {:.1}s",
-        recorder.device_name,
-        load_time.as_secs_f32()
-    );
-    set(&status, ready.clone());
-
-    let mut down = false;
-    for key in keys {
-        match key {
-            Key::Down if !down => {
-                down = true;
-                recorder.begin();
-                let mut s = status.lock().unwrap();
-                s.line = "Listening…".into();
-                s.listening = true;
-            }
-            Key::Up if down => {
-                down = false;
-                let samples = recorder.end();
-                status.lock().unwrap().listening = false;
-                let seconds = samples.len() as f32 / recorder.sample_rate as f32;
-                if seconds < 0.4 {
-                    set(&status, ready.clone());
-                    continue;
-                }
-                set(&status, "Transcribing…");
-                let started = std::time::Instant::now();
-                let text = engine.transcribe(recorder.sample_rate, &samples);
-                let took = started.elapsed().as_secs_f32();
-                if !text.is_empty() {
-                    if let Err(e) = paste::paste(&text) {
-                        eprintln!("paste: {e}");
-                    }
-                }
-                let mut s = status.lock().unwrap();
-                s.last = text.into();
-                s.line = format!("{seconds:.1}s of speech → text in {took:.2}s").into();
-            }
-            _ => {}
-        }
-    }
-}
-
-struct Pill {
-    status: Shared,
-}
-
-impl Render for Pill {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let s = self.status.lock().unwrap().clone();
-        let dot = if s.listening { rgb(0xe5484d) } else { rgb(0x46a758) };
-        div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .size_full()
-            .p_4()
-            .bg(rgb(0x1c1c1f))
-            .text_color(rgb(0xededef))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(div().size_3().rounded_full().bg(dot))
-                    .child(div().text_sm().child(s.line)),
-            )
-            .child(div().text_color(rgb(0xa0a0a8)).child(if s.last.is_empty() {
-                SharedString::from("Your last words show up here.")
-            } else {
-                s.last
-            }))
-    }
-}
+use worker::{Cmd, Phase};
 
 /// `heyra --file clip.wav` prints a transcript: a quick check of the engine.
 fn transcribe_file(path: &str) {
@@ -155,50 +52,78 @@ fn main() {
     if args.len() == 3 && args[1] == "--file" {
         return transcribe_file(&args[2]);
     }
-    let status: Shared = Arc::new(Mutex::new(Status {
-        line: "Starting…".into(),
-        last: SharedString::default(),
-        listening: false,
-    }));
 
-    let (tx, rx) = mpsc::channel();
+    let state = worker::new_state();
+    let (tx, rx) = mpsc::channel::<Cmd>();
+
     {
-        let status = status.clone();
+        // Watch the keyboard. Without Accessibility, ask once, then retry until it's granted.
+        let state = state.clone();
+        let tx = tx.clone();
         std::thread::spawn(move || {
-            if let Err(e) = hotkey::listen(tx) {
-                set(&status, e);
+            let mut asked = false;
+            while !hotkey::trusted(!asked) {
+                asked = true;
+                state.lock().unwrap().blocker = Some(
+                    "Heyra needs Accessibility to hear fn: System Settings → Privacy & Security → Accessibility → turn on Heyra."
+                        .into(),
+                );
+                std::thread::sleep(Duration::from_secs(2));
+            }
+            state.lock().unwrap().blocker = None;
+            let tx = tx.clone();
+            if let Err(e) = hotkey::listen(move |key| {
+                let _ = tx.send(Cmd::Key(key));
+            }) {
+                store::log(&format!("error: {e}"));
+                state.lock().unwrap().blocker = Some(e);
             }
         });
     }
     {
-        let status = status.clone();
-        std::thread::spawn(move || run(status, rx));
+        let state = state.clone();
+        std::thread::spawn(move || worker::run(state, rx));
     }
 
-    Application::new().run(move |cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(460.), px(140.)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |_, cx| {
-                cx.new(|cx: &mut Context<Pill>| {
-                    // Redraw a few times a second to pick up status from the worker threads.
-                    cx.spawn(async move |this, cx| {
-                        loop {
-                            cx.background_executor().timer(Duration::from_millis(100)).await;
-                            if this.update(cx, |_, cx| cx.notify()).is_err() {
-                                break;
-                            }
+    let app = Application::new();
+    {
+        // Clicking the Dock icon brings the main window back after it was closed.
+        let state = state.clone();
+        let tx = tx.clone();
+        app.on_reopen(move |cx| {
+            if cx.windows().iter().all(|w| w.downcast::<ui::Main>().is_none()) {
+                ui::open_main(cx, state.clone(), tx.clone());
+            }
+        });
+    }
+    app.run(move |cx: &mut App| {
+        ui::open_main(cx, state.clone(), tx.clone());
+
+        // Redraw ~30 times a second, and show the pill while listening or writing.
+        let state = state.clone();
+        cx.spawn(async move |cx| {
+            let mut pill: Option<WindowHandle<ui::Pill>> = None;
+            loop {
+                cx.background_executor().timer(Duration::from_millis(33)).await;
+                let phase = state.lock().unwrap().phase;
+                let busy = matches!(phase, Phase::Listening | Phase::Transcribing);
+                let ok = cx.update(|cx| {
+                    match (&pill, busy) {
+                        (None, true) => pill = ui::open_pill(cx, state.clone()),
+                        (Some(handle), false) => {
+                            let _ = handle.update(cx, |_, window, _| window.remove_window());
+                            pill = None;
                         }
-                    })
-                    .detach();
-                    Pill { status }
-                })
-            },
-        )
-        .unwrap();
+                        _ => {}
+                    }
+                    cx.refresh_windows();
+                });
+                if ok.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
         cx.activate(true);
     });
 }

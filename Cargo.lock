@@ -2599,6 +2599,8 @@ dependencies = [
  "cpal",
  "gpui",
  "hound",
+ "serde",
+ "serde_json",
  "sherpa-rs",
 ]
 

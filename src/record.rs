@@ -1,7 +1,7 @@
 //! Microphone capture. The stream stays open so a press starts instantly, and
 //! the last moment before the press is kept so the first word isn't clipped.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -18,16 +18,33 @@ pub struct Recorder {
 
 struct Shared {
     recording: AtomicBool,
+    /// Loudness of the latest audio, f32 bits, for the level meter.
+    level: AtomicU32,
     buffer: Mutex<Vec<f32>>,
     pre_roll: usize,
 }
 
 impl Recorder {
-    pub fn open() -> Result<Self, String> {
+    /// Names of the microphones this machine has.
+    pub fn devices() -> Vec<String> {
         let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .ok_or("no microphone found")?;
+        host.input_devices()
+            .map(|devices| devices.filter_map(|d| d.description().ok().map(|n| n.to_string())).collect())
+            .unwrap_or_default()
+    }
+
+    /// Open the named microphone, or the system default.
+    pub fn open(name: Option<&str>) -> Result<Self, String> {
+        let host = cpal::default_host();
+        let named = name.and_then(|want| {
+            host.input_devices().ok()?.find(|d| {
+                d.description().map(|n| n.to_string() == want).unwrap_or(false)
+            })
+        });
+        let device = match named {
+            Some(device) => device,
+            None => host.default_input_device().ok_or("no microphone found")?,
+        };
         let device_name = device
             .description()
             .map(|d| d.to_string())
@@ -39,6 +56,7 @@ impl Recorder {
         let channels = config.channels() as usize;
         let shared = Arc::new(Shared {
             recording: AtomicBool::new(false),
+            level: AtomicU32::new(0),
             buffer: Mutex::new(Vec::new()),
             pre_roll: (sample_rate as f32 * PRE_ROLL_SECS) as usize,
         });
@@ -52,6 +70,11 @@ impl Recorder {
         }?;
         stream.play().map_err(|e| format!("start microphone: {e}"))?;
         Ok(Self { _stream: stream, shared, sample_rate, device_name })
+    }
+
+    /// 0..1, roughly how loud the microphone is right now.
+    pub fn level(&self) -> f32 {
+        f32::from_bits(self.shared.level.load(Ordering::Relaxed))
     }
 
     pub fn begin(&self) {
@@ -81,9 +104,15 @@ where
             config,
             move |data: &[T], _: &_| {
                 let mut buffer = shared.buffer.lock().unwrap();
+                let start = buffer.len();
                 for frame in data.chunks(channels) {
                     let sum: f32 = frame.iter().map(|s| s.to_sample::<f32>()).sum();
                     buffer.push(sum / channels as f32);
+                }
+                let fresh = &buffer[start..];
+                if !fresh.is_empty() {
+                    let rms = (fresh.iter().map(|x| x * x).sum::<f32>() / fresh.len() as f32).sqrt();
+                    shared.level.store((rms * 8.0).min(1.0).to_bits(), Ordering::Relaxed);
                 }
                 if !shared.recording.load(Ordering::Relaxed) && buffer.len() > shared.pre_roll {
                     let excess = buffer.len() - shared.pre_roll;

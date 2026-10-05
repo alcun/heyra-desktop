@@ -20,5 +20,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>NSMicrophoneUsageDescription</key><string>Heyra listens while you hold the push-to-talk key, and turns speech into text on this Mac.</string>
 </dict></plist>
 PLIST
-codesign --force --sign - "$APP"
+# Sign with a stable identity so macOS keeps Microphone/Accessibility grants across
+# rebuilds. Ad-hoc ("-") signing changes every build and macOS asks again each time.
+IDENTITY="${HEYRA_SIGN:-$(security find-identity -v -p codesigning | awk -F'"' '/Apple Development|Developer ID/ {print $2; exit}')}"
+codesign --force --sign "${IDENTITY:--}" "$APP"
+echo "Signed with: ${IDENTITY:-ad-hoc (permissions reset on every build)}"
 echo "Built $APP"
