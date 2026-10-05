@@ -1,7 +1,7 @@
 //! Speech engines. Parakeet runs anywhere (macOS, Windows, Linux); an Apple
 //! engine can slot in later behind the same trait.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use sherpa_rs::transducer::{TransducerConfig, TransducerRecognizer};
 
@@ -13,15 +13,6 @@ pub trait Engine: Send {
 pub struct Parakeet(TransducerRecognizer);
 
 impl Parakeet {
-    pub fn default_dir() -> PathBuf {
-        if let Ok(dir) = std::env::var("HEYRA_MODEL") {
-            return dir.into();
-        }
-        let home = std::env::var("HOME").unwrap_or_default();
-        Path::new(&home)
-            .join(".local/share/heyra-local/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8")
-    }
-
     pub fn load(dir: &Path) -> Result<Self, String> {
         let file = |name: &str| dir.join(name).to_string_lossy().into_owned();
         let config = TransducerConfig {

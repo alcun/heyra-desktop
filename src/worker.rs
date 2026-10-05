@@ -28,6 +28,9 @@ pub struct State {
     pub mic: Option<String>,
     pub mic_in_use: String,
     pub sample_rate: u32,
+    /// Model download progress, 0..1, while downloading.
+    pub progress: Option<f32>,
+    pub checks: crate::setup::Checks,
     /// Something the user must fix before push-to-talk works (e.g. a permission).
     pub blocker: Option<String>,
 }
@@ -49,6 +52,8 @@ pub fn new_state() -> Shared {
         mic: store::load_settings().mic,
         mic_in_use: String::new(),
         sample_rate: 0,
+        progress: None,
+        checks: crate::setup::check(),
         blocker: None,
     }))
 }
@@ -80,7 +85,29 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
         let mut s = state.lock().unwrap();
         s.message = "Loading the speech model…".into();
     }
-    let mut engine: Box<dyn Engine> = match Parakeet::load(&Parakeet::default_dir()) {
+    let dir = match crate::model::find() {
+        Some(dir) => dir,
+        None => {
+            let progress_state = state.clone();
+            let got = crate::model::download(move |done, total| {
+                let mut s = progress_state.lock().unwrap();
+                let mb = |b: u64| b / 1_000_000;
+                s.progress = (total > 0).then(|| done as f32 / total as f32);
+                s.message = if total > 0 {
+                    format!("Downloading the speech model, once: {} of {} MB", mb(done), mb(total))
+                } else {
+                    format!("Downloading the speech model, once: {} MB", mb(done))
+                };
+            });
+            state.lock().unwrap().progress = None;
+            match got {
+                Ok(dir) => dir,
+                Err(e) => return fail(&state, e),
+            }
+        }
+    };
+    state.lock().unwrap().message = "Loading the speech model…".into();
+    let mut engine: Box<dyn Engine> = match Parakeet::load(&dir) {
         Ok(engine) => Box::new(engine),
         Err(e) => return fail(&state, e),
     };

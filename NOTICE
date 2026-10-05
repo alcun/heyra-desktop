@@ -1,0 +1,17 @@
+Heyra builds on the work below. Thank you.
+
+Speech model: NVIDIA Parakeet TDT 0.6B v3
+  https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
+  Licensed CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).
+  Heyra downloads the int8 ONNX conversion published by the sherpa-onnx project,
+  unmodified, and mirrors that file on this repository's releases.
+
+sherpa-onnx (speech runtime) - Apache License 2.0
+  https://github.com/k2-fsa/sherpa-onnx
+
+GPUI (user interface) - Apache License 2.0
+  https://github.com/zed-industries/zed
+
+IBM Plex Sans and IBM Plex Mono (fonts) - SIL Open Font License 1.1
+  https://github.com/IBM/plex
+  Licence text: assets/fonts/OFL.txt

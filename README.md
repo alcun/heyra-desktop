@@ -1,24 +1,73 @@
-# Heyra (desktop)
+# Heyra
 
-Hold **fn**, talk, let go: your words are pasted where your cursor is.
-Speech becomes text on your own machine with NVIDIA's Parakeet model. Nothing leaves it.
+Hold **fn**, talk, let go. Your words are typed wherever your cursor is.
 
-Proof of concept, macOS first. Built with [GPUI](https://www.gpui.rs) and
-[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx).
+Heyra turns speech into text on your own Mac with NVIDIA's Parakeet model. It goes
+online once, to download the model on first launch. After that your voice and your
+words never leave the machine. No account, no subscription.
 
-## Run
+> **Proof of concept.** macOS only for now (Apple Silicon or Intel, macOS 13+).
 
-1. Download the model (about 490 MB):
-   ```sh
-   mkdir -p ~/.local/share/heyra-local && cd ~/.local/share/heyra-local
-   curl -L https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2 | tar xj
-   ```
-2. Build and open: `./bundle.sh && open target/Heyra.app`
-3. Allow Microphone, and turn Heyra on under System Settings → Privacy & Security →
-   Accessibility. Restart the app.
-4. Hold fn, talk, let go.
+![Heyra](docs/screenshot.png)
 
-A Teenage Engineering TING works too via [ting-wispr](https://github.com/alcun/ting-wispr):
-its squeeze sends ctrl+opt+F12, which Heyra also listens for.
+## Install
 
-`heyra --file clip.wav` prints a transcript, to check the engine.
+1. Download `Heyra.zip` from [Releases](https://github.com/alcun/heyra-desktop/releases),
+   unzip it and move **Heyra** to Applications.
+2. The first time, right-click Heyra and choose **Open**. It isn't notarized by Apple
+   yet, so macOS asks once.
+3. Heyra opens on Home with a short setup list. It ticks each step off as you go:
+   - the speech model downloads (about 490 MB, once)
+   - allow the microphone
+   - turn on Heyra under Privacy & Security → Accessibility, so it can hear fn and type
+   - set Keyboard → Press 🌐 key to → **Do nothing**, so fn doesn't also open emoji
+4. Click into any text box, hold fn, say something, let go.
+
+Heyra lives in the menu bar. Open it from there to see your history.
+
+## What it does
+
+- **Push to talk.** Hold fn. A small gauge on the right edge of the screen shows it's
+  listening. Let go and the text is pasted in, and your clipboard is put back.
+- **Fast.** Six seconds of speech becomes text in about 0.4 s on an M-series Mac.
+- **History.** Every take is kept on your Mac. Click one to copy it again.
+- **Dictionary.** Fix words it mishears: `a cappy bar => capybara`.
+- **Any microphone.** Pick one in Settings.
+- **TING.** A Teenage Engineering EP-2350 works as a push-to-talk mic through
+  [ting-wispr](https://github.com/alcun/ting-wispr): its squeeze sends ctrl+opt+F12,
+  which Heyra also listens for.
+
+Everything Heyra keeps is in `~/Library/Application Support/Heyra`.
+
+## Build from source
+
+You need Rust (`rustup`) and Xcode's command line tools.
+
+```sh
+git clone https://github.com/alcun/heyra-desktop.git
+cd heyra-desktop
+./bundle.sh            # builds target/Heyra.app
+open target/Heyra.app
+```
+
+`bundle.sh` signs with your Apple Development certificate if you have one, so macOS
+keeps your permissions between builds. Without one it signs ad hoc, and macOS will ask
+for Accessibility again after each rebuild.
+
+`target/release/heyra --file clip.wav` prints a transcript, to test the engine.
+
+## How it works
+
+- [GPUI](https://www.gpui.rs) for the interface (the framework Zed is built with).
+- [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) runs Parakeet TDT 0.6B v3 (int8)
+  in the app itself. 25 languages.
+- A macOS event tap watches for fn, `cpal` records the microphone, and the text is
+  pasted with a real ⌘V.
+
+The model is downloaded from this repository's releases, with the sherpa-onnx release
+as a fallback, and checked against a SHA-256 before use.
+
+## Credits and licence
+
+Heyra is MIT licensed. The model, runtime and fonts have their own licences; see
+[NOTICE](NOTICE).

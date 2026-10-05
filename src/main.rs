@@ -4,8 +4,10 @@
 
 mod engine;
 mod hotkey;
+mod model;
 mod paste;
 mod record;
+mod setup;
 mod store;
 mod tray;
 mod ui;
@@ -37,7 +39,8 @@ fn transcribe_file(path: &str) {
         .map(|f| f.iter().sum::<f32>() / channels as f32)
         .collect();
     let started = std::time::Instant::now();
-    let mut engine = Parakeet::load(&Parakeet::default_dir()).expect("load model");
+    let dir = model::find().expect("no model yet: open Heyra once to download it");
+    let mut engine = Parakeet::load(&dir).expect("load model");
     let loaded = started.elapsed().as_secs_f32();
     let started = std::time::Instant::now();
     let text = engine.transcribe(spec.sample_rate, &mono);
@@ -53,6 +56,21 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() == 3 && args[1] == "--file" {
         return transcribe_file(&args[2]);
+    }
+    if args.len() == 2 && args[1] == "--fetch-model" {
+        // Exercise the first-run download without the window.
+        let result = model::find().map(Ok).unwrap_or_else(|| {
+            model::download(|done, total| eprint!("\r{} / {} MB   ", done / 1_000_000, total / 1_000_000))
+        });
+        eprintln!();
+        match result {
+            Ok(dir) => println!("model ready at {}", dir.display()),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+        return;
     }
 
     let state = worker::new_state();
@@ -85,6 +103,15 @@ fn main() {
     {
         let state = state.clone();
         std::thread::spawn(move || worker::run(state, rx));
+    }
+    {
+        // Keep the setup list on Home current as permissions change.
+        let state = state.clone();
+        std::thread::spawn(move || loop {
+            let checks = setup::check();
+            state.lock().unwrap().checks = checks;
+            std::thread::sleep(Duration::from_secs(1));
+        });
     }
 
     let app = Application::new();

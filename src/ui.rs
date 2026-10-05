@@ -14,6 +14,7 @@ use gpui::{
     prelude::*, px, rgb, size,
 };
 
+use crate::setup::{self, Mic};
 use crate::store;
 use crate::worker::{Cmd, Phase, Shared};
 
@@ -275,6 +276,9 @@ impl Main {
         };
         let count = s.history.len();
         let level = s.level;
+        let progress = s.progress;
+        let checks = s.checks;
+        let model_ready = matches!(s.phase, Phase::Ready | Phase::Listening | Phase::Transcribing);
         let mic = s.mic_in_use.clone();
         let rate = s.sample_rate;
         drop(s);
@@ -284,6 +288,7 @@ impl Main {
         let lit = match phase {
             Phase::Listening => ((level * 1.15).min(1.0) * SEGMENTS as f32) as usize,
             Phase::Transcribing => ((t * 24.0) as usize) % SEGMENTS,
+            Phase::Loading => progress.map(|p| (p * SEGMENTS as f32) as usize).unwrap_or(0),
             _ => 0,
         };
         let state_word = match phase {
@@ -359,6 +364,79 @@ impl Main {
             .child(div().w(px(1.)).bg(rgb(HAIR)))
             .child(cell("LATENCY", latency));
 
+        // First-run setup: each step ticks itself off as macOS reports it done.
+        let step = |id: &'static str, done: bool, name: &'static str, detail: String, action: Option<(&'static str, &'static str)>| {
+            div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .py_2()
+                .border_b_1()
+                .border_color(rgb(HAIR))
+                .child(
+                    div()
+                        .flex_none()
+                        .w(px(36.))
+                        .child(label(if done { "OK" } else { "··" }).text_color(rgb(if done { GOLD } else { DIM }))),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(div().text_sm().text_color(rgb(if done { SLATE } else { CREAM })).child(name))
+                        .when(!done, |d| d.child(hint(detail))),
+                )
+                .when_some(action.filter(|_| !done), |d, (text, pane)| {
+                    d.child(button(id, text).on_click(move |_, _, _| setup::open_settings(pane)))
+                })
+        };
+        let model_detail = match progress {
+            Some(p) => format!("Downloading once, {:.0}% done. After this Heyra never goes online.", p * 100.0),
+            None => "Loading…".to_string(),
+        };
+        let steps = [
+            (model_ready, "Speech model on this Mac"),
+            (checks.mic == Mic::Allowed, "Microphone"),
+            (checks.accessibility, "Accessibility, to hear fn and type for you"),
+            (checks.fn_free, "fn key free for Heyra"),
+            (count > 0, "First take"),
+        ];
+        let done = steps.iter().filter(|(d, _)| *d).count();
+        let setup_list = div()
+            .flex()
+            .flex_col()
+            .child(label(format!("SETUP · {done} OF {} DONE", steps.len())).pb_2())
+            .child(step("s-model", model_ready, steps[0].1, model_detail, None))
+            .child(step(
+                "s-mic",
+                steps[1].0,
+                steps[1].1,
+                if checks.mic == Mic::Denied {
+                    "Heyra was refused the microphone. Turn it on in Settings.".into()
+                } else {
+                    "macOS asks the first time you hold fn.".into()
+                },
+                (checks.mic == Mic::Denied).then_some(("OPEN SETTINGS", setup::PANE_MICROPHONE)),
+            ))
+            .child(step(
+                "s-ax",
+                steps[2].0,
+                steps[2].1,
+                "Turn on Heyra in Privacy & Security → Accessibility.".into(),
+                Some(("OPEN SETTINGS", setup::PANE_ACCESSIBILITY)),
+            ))
+            .child(step(
+                "s-fn",
+                steps[3].0,
+                steps[3].1,
+                "Keyboard → Press 🌐 key to → Do nothing, so fn doesn't also open emoji or dictation.".into(),
+                Some(("KEYBOARD", setup::PANE_KEYBOARD)),
+            ))
+            .child(step("s-take", steps[4].0, steps[4].1, "Click into any text box, hold fn, say a sentence, let go.".into(), None));
+        let setup_done = done == steps.len();
+
         let recent: Vec<usize> = (0..count).rev().take(6).collect();
         div()
             .flex()
@@ -366,6 +444,7 @@ impl Main {
             .gap_5()
             .child(title("Home"))
             .child(deck)
+            .when(!setup_done, |d| d.child(setup_list))
             .child(strip)
             .child(
                 div()
