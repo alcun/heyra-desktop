@@ -1,0 +1,13 @@
+[package]
+name = "heyra"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+arboard = "3.6.1"
+core-foundation = "=0.10.0"
+core-graphics = "0.24"
+cpal = "0.18.2"
+gpui = { version = "0.2.2", features = ["runtime_shaders"] }
+hound = "3.5.1"
+sherpa-rs = { version = "0.6.8", default-features = false, features = ["download-binaries", "static"] }
