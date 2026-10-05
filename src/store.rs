@@ -124,6 +124,25 @@ pub fn apply_dictionary(text: &str, rules: &[(String, String)]) -> String {
 pub struct Settings {
     /// Microphone name; None = the system default.
     pub mic: Option<String>,
+    /// Testing only: keep the most recent clip as last-clip.wav (overwritten each
+    /// time). Off by default, so no audio is ever stored.
+    #[serde(default)]
+    pub keep_last_clip: bool,
+}
+
+pub fn save_clip(sample_rate: u32, samples: &[f32]) {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    if let Ok(mut writer) = hound::WavWriter::create(dir().join("last-clip.wav"), spec) {
+        for s in samples {
+            let _ = writer.write_sample((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16);
+        }
+        let _ = writer.finalize();
+    }
 }
 
 pub fn load_settings() -> Settings {

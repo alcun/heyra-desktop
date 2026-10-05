@@ -117,6 +117,9 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                 let secs = samples.len() as f32 / recorder.sample_rate as f32;
                 let peak = samples.iter().fold(0f32, |m, x| m.max(x.abs()));
                 store::log(&format!("clip {secs:.1}s peak {peak:.3}"));
+                if store::load_settings().keep_last_clip {
+                    store::save_clip(recorder.sample_rate, &samples);
+                }
                 if secs < 0.4 {
                     ready(&state);
                     continue;
@@ -147,7 +150,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
             }
             Some(Cmd::SetMic(name)) if !down => {
                 drop(recorder);
-                store::save_settings(&store::Settings { mic: name.clone() });
+                store::save_settings(&store::Settings { mic: name.clone(), ..store::load_settings() });
                 state.lock().unwrap().mic = name.clone();
                 recorder = match open_mic(&state, name.as_deref()) {
                     Some(r) => r,

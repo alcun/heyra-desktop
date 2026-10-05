@@ -46,8 +46,8 @@ pub fn listen(on_key: impl Fn(Key) + 'static) -> Result<(), String> {
         move |_, kind, event| {
             let code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
             let flags = event.get_flags();
-            if matches!(kind, CGEventType::FlagsChanged) {
-                crate::store::log(&format!("flags changed: key {code} flags {:#x}", flags.bits()));
+            if matches!(kind, CGEventType::FlagsChanged) && code == FN_KEY {
+                crate::store::log(&format!("fn {}", if flags.contains(CGEventFlags::CGEventFlagSecondaryFn) { "down" } else { "up" }));
             }
             match kind {
                 CGEventType::FlagsChanged if code == FN_KEY => {
