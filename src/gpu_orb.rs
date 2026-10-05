@@ -110,8 +110,9 @@ fragment float4 fs(VOut in [[stage_in]], constant U& u [[buffer(0)]]) {
 
     float exposure = 1.4 + 2.4 * u.voice + 1.2 * u.writing;
     float3 inner = 1.0 - exp(-col * exposure);
-    // The resting dot is quiet: its light dims as it shrinks.
-    inner *= mix(0.35, 1.0, smoothstep(0.3, 0.9, u.scale));
+    // At rest the light goes out: the dot is just a small dark circle.
+    float awake = smoothstep(0.14, 0.6, u.scale);
+    inner *= awake;
 
     // A solid black body, like Siri's: the light reads on any background.
     float rs = FOCAL / sqrt(CAM * CAM - 1.0);
@@ -119,10 +120,10 @@ fragment float4 fs(VOut in [[stage_in]], constant U& u [[buffer(0)]]) {
     float aa = 1.5 / (min(u.res.x, u.res.y) * 0.5 * max(u.scale, 0.05));
     float disc = 1.0 - smoothstep(rs - aa, rs + aa, d);
     // A faint cream rim so the edge is defined against dark backgrounds.
-    inner += mix(gold, cream, 0.5) * smoothstep(rs * 0.8, rs, d) * disc * (0.12 + 0.2 * u.voice);
+    inner += mix(gold, cream, 0.5) * smoothstep(rs * 0.8, rs, d) * disc * (0.12 + 0.2 * u.voice) * max(awake, 0.5);
 
     // A soft halo outside the body.
-    float halo = exp(-max(d - rs, 0.0) * 7.0) * (1.0 - disc) * (0.22 + 0.45 * u.voice + 0.3 * u.writing);
+    float halo = exp(-max(d - rs, 0.0) * 7.0) * (1.0 - disc) * (0.22 + 0.45 * u.voice + 0.3 * u.writing) * awake;
     float3 halo_col = mix(gold, cream, 0.3) * halo;
 
     float3 rgb = inner * disc + halo_col;
@@ -215,6 +216,8 @@ impl Gpu {
 /// A borderless, click-through panel at the bottom centre, above the Dock, holding a Metal layer.
 pub struct Overlay {
     panel: id,
+    /// Centre of the orb in top-left screen points (GPUI's coordinates).
+    pub centre: (f64, f64),
     layer: MetalLayer,
     gpu: Gpu,
     pixels: f64,
@@ -262,7 +265,11 @@ impl Overlay {
             let view: id = msg_send![panel, contentView];
             view.setWantsLayer(YES);
             let _: () = msg_send![view, setLayer: layer.as_ref() as *const _ as id];
-            Ok(Self { panel, layer, gpu, pixels: SIZE * scale, visible: false })
+            let primary: id = msg_send![class!(NSScreen), screens];
+            let primary: id = msg_send![primary, objectAtIndex: 0u64];
+            let top = NSScreen::frame(primary).size.height;
+            let centre = (rect.origin.x + SIZE / 2.0, top - (rect.origin.y + SIZE / 2.0));
+            Ok(Self { panel, centre, layer, gpu, pixels: SIZE * scale, visible: false })
         }
     }
 

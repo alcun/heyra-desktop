@@ -53,8 +53,8 @@ fn transcribe_file(path: &str) {
     );
 }
 
-/// `heyra --preview-gauge`: the edge gauge alone with a fake voice, for design work.
-fn preview_gauge(state: worker::Shared) {
+/// `heyra --preview-orb`: the orb alone with a fake voice, for design work.
+fn preview_orb(state: worker::Shared) {
     {
         let state = state.clone();
         std::thread::spawn(move || {
@@ -100,11 +100,12 @@ struct OrbDriver {
     smooth: f32,
     writing: f32,
     scale: f32,
-    frame: u32,
+    /// The resting dot never changes, so it's drawn once and left alone.
+    rested: bool,
 }
 
 /// Size of the resting dot, as a fraction of the full orb.
-const IDLE_SCALE: f32 = 0.3;
+const IDLE_SCALE: f32 = 0.12;
 
 impl OrbDriver {
     fn new() -> Self {
@@ -118,12 +119,17 @@ impl OrbDriver {
             smooth: 0.0,
             writing: 0.0,
             scale: IDLE_SCALE,
-            frame: 0,
+            rested: false,
         }
     }
 
-    /// Called ~60 times a second. Idle, it's a small dark dot breathing slowly,
-    /// redrawn about 10 times a second; talking grows it into the full orb.
+    /// Called ~60 times a second. At rest it's a tiny still dark circle, drawn
+    /// once; talking grows it into the full orb.
+    /// Centre of the orb on screen, once the overlay exists.
+    fn centre(&self) -> Option<(f64, f64)> {
+        self.overlay.as_ref().map(|o| o.centre)
+    }
+
     fn tick(&mut self, phase: Phase, level: f32) {
         let Some(overlay) = self.overlay.as_mut() else { return };
         let now = std::time::Instant::now();
@@ -131,6 +137,7 @@ impl OrbDriver {
         self.last = now;
         if matches!(phase, Phase::Loading | Phase::Error) {
             overlay.hide();
+            self.rested = false;
             return;
         }
         overlay.show();
@@ -149,12 +156,11 @@ impl OrbDriver {
         self.wave += dt * (if writing { 3.2 } else if listening { 0.6 + 2.0 * self.smooth } else { 0.25 });
         self.clock += dt * (if active { 0.8 + 1.2 * self.smooth } else { 0.3 });
 
-        // At rest and settled, draw every sixth tick.
-        self.frame = self.frame.wrapping_add(1);
-        let settled = !active && (self.scale - IDLE_SCALE).abs() < 0.005;
-        if settled && self.frame % 6 != 0 {
+        let settled = !active && (self.scale - IDLE_SCALE).abs() < 0.002;
+        if settled && self.rested {
             return;
         }
+        self.rested = settled;
         overlay.draw(gpu_orb::Uniforms {
             time: self.clock,
             voice: self.smooth,
@@ -185,7 +191,7 @@ fn main() {
             wave: 2.1,
             twist: if writing { 0.4 } else { 1.0 + 1.5 * voice },
             writing: if writing { 1.0 } else { 0.0 },
-            scale: if args[3] == "idle" { 0.3 } else { 1.0 },
+            scale: if args[3] == "idle" { IDLE_SCALE } else { 1.0 },
         };
         let started = std::time::Instant::now();
         let mut px = gpu.snapshot(size, &u);
@@ -219,8 +225,8 @@ fn main() {
     }
 
     let state = worker::new_state();
-    if args.len() == 2 && args[1] == "--preview-gauge" {
-        return preview_gauge(state);
+    if args.len() == 2 && args[1] == "--preview-orb" {
+        return preview_orb(state);
     }
     let (tx, rx) = mpsc::channel::<Cmd>();
 
@@ -290,6 +296,10 @@ fn main() {
         let state = state.clone();
         let mut orb = OrbDriver::new();
         let mut frame = 0u32;
+        let hovered = std::rc::Rc::new(std::cell::Cell::new(false));
+        let clicked = std::rc::Rc::new(std::cell::Cell::new(false));
+        let mut hotspot: Option<gpui::WindowHandle<ui::Hotspot>> = None;
+        let mut hint: Option<gpui::WindowHandle<ui::Hint>> = None;
         cx.spawn(async move |cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(16)).await;
@@ -300,7 +310,34 @@ fn main() {
                 };
                 let ok = cx.update(|cx| {
                     orb.tick(phase, level);
-                    match tray.as_ref().and_then(|t| t.poll()) {
+                    // The resting dot takes hover and clicks; the full orb never does.
+                    let resting = phase == Phase::Ready;
+                    match (&hotspot, resting, orb.centre()) {
+                        (None, true, Some(centre)) => {
+                            hotspot = ui::open_hotspot(
+                                cx,
+                                centre,
+                                ui::Hotspot { hovered: hovered.clone(), clicked: clicked.clone() },
+                            );
+                        }
+                        (Some(h), false, _) => {
+                            let _ = h.update(cx, |_, window, _| window.remove_window());
+                            hotspot = None;
+                            hovered.set(false);
+                        }
+                        _ => {}
+                    }
+                    match (&hint, hovered.get(), orb.centre()) {
+                        (None, true, Some(centre)) => hint = ui::open_hint(cx, centre),
+                        (Some(h), false, _) => {
+                            let _ = h.update(cx, |_, window, _| window.remove_window());
+                            hint = None;
+                        }
+                        _ => {}
+                    }
+                    let open_from_dot = clicked.replace(false);
+                    let action = tray.as_ref().and_then(|t| t.poll()).or(open_from_dot.then_some(tray::Action::Open));
+                    match action {
                         Some(tray::Action::Open) => {
                             let existing = cx.windows().into_iter().find_map(|w| w.downcast::<ui::Main>());
                             match existing {
@@ -314,7 +351,7 @@ fn main() {
                         Some(tray::Action::Quit) => cx.quit(),
                         None => {}
                     }
-                    if frame % 2 == 0 {
+                    if frame.is_multiple_of(2) {
                         cx.refresh_windows();
                     }
                 });
