@@ -62,7 +62,11 @@ fn preview_gauge(state: worker::Shared) {
             loop {
                 let t = start.elapsed().as_secs_f32();
                 let mut s = state.lock().unwrap();
-                s.phase = if t % 8.0 < 6.0 { Phase::Listening } else { Phase::Transcribing };
+                s.phase = match t % 10.0 {
+                    x if x < 3.0 => Phase::Ready,
+                    x if x < 8.0 => Phase::Listening,
+                    _ => Phase::Transcribing,
+                };
                 s.level = ((t * 3.1).sin() * 0.5 + 0.5) * ((t * 0.7).sin() * 0.35 + 0.55);
                 drop(s);
                 std::thread::sleep(Duration::from_millis(30));
@@ -95,41 +99,69 @@ struct OrbDriver {
     twist: f32,
     smooth: f32,
     writing: f32,
+    scale: f32,
+    frame: u32,
 }
+
+/// Size of the resting dot, as a fraction of the full orb.
+const IDLE_SCALE: f32 = 0.3;
 
 impl OrbDriver {
     fn new() -> Self {
         let overlay = gpu_orb::Overlay::new().map_err(|e| store::log(&format!("orb: {e}"))).ok();
-        Self { overlay, last: std::time::Instant::now(), clock: 0.0, wave: 0.0, twist: 1.0, smooth: 0.0, writing: 0.0 }
+        Self {
+            overlay,
+            last: std::time::Instant::now(),
+            clock: 0.0,
+            wave: 0.0,
+            twist: 1.0,
+            smooth: 0.0,
+            writing: 0.0,
+            scale: IDLE_SCALE,
+            frame: 0,
+        }
     }
 
+    /// Called ~60 times a second. Idle, it's a small dark dot breathing slowly,
+    /// redrawn about 10 times a second; talking grows it into the full orb.
     fn tick(&mut self, phase: Phase, level: f32) {
         let Some(overlay) = self.overlay.as_mut() else { return };
         let now = std::time::Instant::now();
         let dt = now.duration_since(self.last).as_secs_f32().min(0.1);
         self.last = now;
-        let listening = phase == Phase::Listening;
-        let writing = phase == Phase::Transcribing;
-        if !listening && !writing {
+        if matches!(phase, Phase::Loading | Phase::Error) {
             overlay.hide();
-            self.smooth = 0.0;
             return;
         }
         overlay.show();
+        let listening = phase == Phase::Listening;
+        let writing = phase == Phase::Transcribing;
+        let active = listening || writing;
+
         let target = if listening { (level * 1.25).min(1.0) } else { 0.0 };
         let rate = if target > self.smooth { 0.35 } else { 0.07 };
         self.smooth += (target - self.smooth) * rate;
         self.writing += ((if writing { 1.0 } else { 0.0 }) - self.writing) * 0.12;
+        let scale_target = if active { 1.0 } else { IDLE_SCALE };
+        self.scale += (scale_target - self.scale) * if active { 0.22 } else { 0.1 };
         let twist_target = if writing { 0.35 } else { 1.0 + 1.6 * self.smooth };
         self.twist += (twist_target - self.twist) * 0.08;
-        self.wave += dt * (if writing { 3.2 } else { 0.6 + 2.0 * self.smooth });
-        self.clock += dt * (0.8 + 1.2 * self.smooth);
+        self.wave += dt * (if writing { 3.2 } else if listening { 0.6 + 2.0 * self.smooth } else { 0.25 });
+        self.clock += dt * (if active { 0.8 + 1.2 * self.smooth } else { 0.3 });
+
+        // At rest and settled, draw every sixth tick.
+        self.frame = self.frame.wrapping_add(1);
+        let settled = !active && (self.scale - IDLE_SCALE).abs() < 0.005;
+        if settled && self.frame % 6 != 0 {
+            return;
+        }
         overlay.draw(gpu_orb::Uniforms {
             time: self.clock,
             voice: self.smooth,
             wave: self.wave,
             twist: self.twist,
             writing: self.writing,
+            scale: self.scale,
             ..Default::default()
         });
     }
@@ -153,7 +185,7 @@ fn main() {
             wave: 2.1,
             twist: if writing { 0.4 } else { 1.0 + 1.5 * voice },
             writing: if writing { 1.0 } else { 0.0 },
-            pad: 0.0,
+            scale: if args[3] == "idle" { 0.3 } else { 1.0 },
         };
         let started = std::time::Instant::now();
         let mut px = gpu.snapshot(size, &u);

@@ -41,7 +41,7 @@ struct U {
     float wave;
     float twist;
     float writing;
-    float pad;
+    float scale;
 };
 
 float3x3 rot_y(float a) {
@@ -55,8 +55,9 @@ float3x3 rot_z(float a) {
 }
 
 fragment float4 fs(VOut in [[stage_in]], constant U& u [[buffer(0)]]) {
-    float2 uv = (in.pos.xy * 2.0 - u.res) / min(u.res.x, u.res.y);
-    uv.y = -uv.y;
+    float2 frame_uv = (in.pos.xy * 2.0 - u.res) / min(u.res.x, u.res.y);
+    frame_uv.y = -frame_uv.y;
+    float2 uv = frame_uv / max(u.scale, 0.05);
 
     const float CAM = 2.6;
     const float FOCAL = 1.6;
@@ -108,19 +109,28 @@ fragment float4 fs(VOut in [[stage_in]], constant U& u [[buffer(0)]]) {
     }
 
     float exposure = 1.4 + 2.4 * u.voice + 1.2 * u.writing;
-    col = 1.0 - exp(-col * exposure);
+    float3 inner = 1.0 - exp(-col * exposure);
+    // The resting dot is quiet: its light dims as it shrinks.
+    inner *= mix(0.35, 1.0, smoothstep(0.3, 0.9, u.scale));
 
-    // A soft halo from the sphere's edge on screen.
+    // A solid black body, like Siri's: the light reads on any background.
     float rs = FOCAL / sqrt(CAM * CAM - 1.0);
     float d = length(uv);
-    float halo = exp(-max(d - rs, 0.0) * 8.0) * smoothstep(rs * 0.8, rs * 1.02, d);
-    col += mix(gold, cream, 0.3) * halo * (0.18 + 0.4 * u.voice + 0.25 * u.writing);
+    float aa = 1.5 / (min(u.res.x, u.res.y) * 0.5 * max(u.scale, 0.05));
+    float disc = 1.0 - smoothstep(rs - aa, rs + aa, d);
+    // A faint cream rim so the edge is defined against dark backgrounds.
+    inner += mix(gold, cream, 0.5) * smoothstep(rs * 0.8, rs, d) * disc * (0.12 + 0.2 * u.voice);
 
-    // Emitted light: colour is already premultiplied; alpha follows the brightest channel.
-    float fade = 1.0 - smoothstep(0.86, 1.0, d);
-    col *= fade;
-    float a = clamp(max(col.r, max(col.g, col.b)) * 1.15, 0.0, 1.0);
-    return float4(col, a);
+    // A soft halo outside the body.
+    float halo = exp(-max(d - rs, 0.0) * 7.0) * (1.0 - disc) * (0.22 + 0.45 * u.voice + 0.3 * u.writing);
+    float3 halo_col = mix(gold, cream, 0.3) * halo;
+
+    float3 rgb = inner * disc + halo_col;
+    float a = disc + (1.0 - disc) * clamp(max(halo_col.r, max(halo_col.g, halo_col.b)) * 1.2, 0.0, 1.0);
+
+    // Never draw to the window edge.
+    float fade = 1.0 - smoothstep(0.86, 1.0, length(frame_uv));
+    return float4(rgb * fade, a * fade);
 }
 "#;
 
@@ -133,7 +143,8 @@ pub struct Uniforms {
     pub wave: f32,
     pub twist: f32,
     pub writing: f32,
-    pub pad: f32,
+    /// Size of the orb in its window: about 0.3 for the idle dot, 1.0 in full.
+    pub scale: f32,
 }
 
 pub struct Gpu {
