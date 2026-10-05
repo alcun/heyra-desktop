@@ -111,7 +111,7 @@ fragment float4 fs(VOut in [[stage_in]], constant U& u [[buffer(0)]]) {
     float exposure = 1.4 + 2.4 * u.voice + 1.2 * u.writing;
     float3 inner = 1.0 - exp(-col * exposure);
     // At rest the light goes out: the dot is just a small dark circle.
-    float awake = smoothstep(0.14, 0.6, u.scale);
+    float awake = smoothstep(0.14, 0.34, u.scale);
     inner *= awake;
 
     // A solid black body, like Siri's: the light reads on any background.
@@ -296,5 +296,16 @@ impl Overlay {
         let buffer = self.gpu.encode(drawable.texture(), &u);
         buffer.present_drawable(drawable);
         buffer.commit();
+    }
+}
+
+/// The pointer, in top-left screen points (GPUI's coordinates).
+#[allow(unexpected_cfgs)]
+pub fn pointer() -> (f64, f64) {
+    unsafe {
+        let at: NSPoint = msg_send![class!(NSEvent), mouseLocation];
+        let screens: id = msg_send![class!(NSScreen), screens];
+        let primary: id = msg_send![screens, objectAtIndex: 0u64];
+        (at.x, NSScreen::frame(primary).size.height - at.y)
     }
 }

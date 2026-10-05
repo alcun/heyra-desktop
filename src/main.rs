@@ -81,7 +81,7 @@ fn preview_orb(state: worker::Shared) {
                 let s = state.lock().unwrap();
                 (s.phase, s.level)
             };
-            if cx.update(|_| orb.tick(phase, level)).is_err() {
+            if cx.update(|_| orb.tick(phase, level, false)).is_err() {
                 break;
             }
         })
@@ -106,6 +106,8 @@ struct OrbDriver {
 
 /// Size of the resting dot, as a fraction of the full orb.
 const IDLE_SCALE: f32 = 0.12;
+/// Size of the dot under the pointer.
+const HOVER_SCALE: f32 = 0.3;
 
 impl OrbDriver {
     fn new() -> Self {
@@ -130,7 +132,7 @@ impl OrbDriver {
         self.overlay.as_ref().map(|o| o.centre)
     }
 
-    fn tick(&mut self, phase: Phase, level: f32) {
+    fn tick(&mut self, phase: Phase, level: f32, hovering: bool) {
         let Some(overlay) = self.overlay.as_mut() else { return };
         let now = std::time::Instant::now();
         let dt = now.duration_since(self.last).as_secs_f32().min(0.1);
@@ -148,15 +150,17 @@ impl OrbDriver {
         let target = if listening { (level * 1.25).min(1.0) } else { 0.0 };
         let rate = if target > self.smooth { 0.35 } else { 0.07 };
         self.smooth += (target - self.smooth) * rate;
-        self.writing += ((if writing { 1.0 } else { 0.0 }) - self.writing) * 0.12;
-        let scale_target = if active { 1.0 } else { IDLE_SCALE };
+        // Hovering the resting dot: it grows a little and spins gold.
+        let gold = writing || hovering;
+        self.writing += ((if gold { 1.0 } else { 0.0 }) - self.writing) * 0.12;
+        let scale_target = if active { 1.0 } else if hovering { HOVER_SCALE } else { IDLE_SCALE };
         self.scale += (scale_target - self.scale) * if active { 0.22 } else { 0.1 };
         let twist_target = if writing { 0.35 } else { 1.0 + 1.6 * self.smooth };
         self.twist += (twist_target - self.twist) * 0.08;
-        self.wave += dt * (if writing { 3.2 } else if listening { 0.6 + 2.0 * self.smooth } else { 0.25 });
-        self.clock += dt * (if active { 0.8 + 1.2 * self.smooth } else { 0.3 });
+        self.wave += dt * (if gold { 3.2 } else if listening { 0.6 + 2.0 * self.smooth } else { 0.25 });
+        self.clock += dt * (if active || hovering { 0.8 + 1.2 * self.smooth } else { 0.3 });
 
-        let settled = !active && (self.scale - IDLE_SCALE).abs() < 0.002;
+        let settled = !active && !hovering && (self.scale - IDLE_SCALE).abs() < 0.002;
         if settled && self.rested {
             return;
         }
@@ -296,10 +300,8 @@ fn main() {
         let state = state.clone();
         let mut orb = OrbDriver::new();
         let mut frame = 0u32;
-        let hovered = std::rc::Rc::new(std::cell::Cell::new(false));
         let clicked = std::rc::Rc::new(std::cell::Cell::new(false));
         let mut hotspot: Option<gpui::WindowHandle<ui::Hotspot>> = None;
-        let mut hint: Option<gpui::WindowHandle<ui::Hint>> = None;
         cx.spawn(async move |cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(16)).await;
@@ -309,29 +311,21 @@ fn main() {
                     (s.phase, s.level)
                 };
                 let ok = cx.update(|cx| {
-                    orb.tick(phase, level);
-                    // The resting dot takes hover and clicks; the full orb never does.
+                    // At rest, the pointer over the dot wakes it a little; a click opens Heyra.
                     let resting = phase == Phase::Ready;
+                    let hovering = resting
+                        && orb.centre().is_some_and(|(cx_, cy)| {
+                            let (px_, py) = gpu_orb::pointer();
+                            (px_ - cx_).hypot(py - cy) < 14.0
+                        });
+                    orb.tick(phase, level, hovering);
                     match (&hotspot, resting, orb.centre()) {
                         (None, true, Some(centre)) => {
-                            hotspot = ui::open_hotspot(
-                                cx,
-                                centre,
-                                ui::Hotspot { hovered: hovered.clone(), clicked: clicked.clone() },
-                            );
+                            hotspot = ui::open_hotspot(cx, centre, ui::Hotspot { clicked: clicked.clone() });
                         }
                         (Some(h), false, _) => {
                             let _ = h.update(cx, |_, window, _| window.remove_window());
                             hotspot = None;
-                            hovered.set(false);
-                        }
-                        _ => {}
-                    }
-                    match (&hint, hovered.get(), orb.centre()) {
-                        (None, true, Some(centre)) => hint = ui::open_hint(cx, centre),
-                        (Some(h), false, _) => {
-                            let _ = h.update(cx, |_, window, _| window.remove_window());
-                            hint = None;
                         }
                         _ => {}
                     }

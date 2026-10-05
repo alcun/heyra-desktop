@@ -647,45 +647,62 @@ impl Render for Main {
     }
 }
 
-// ---- the resting dot's hover target and its "Open Heyra" label ----
+// ---- the resting dot's click target ----
 //
-// The dot itself is drawn by the orb overlay, which ignores the mouse. These two
-// small windows sit over it while Heyra is at rest: a target the size of the dot
-// that takes hover and clicks, and a label that appears above it on hover.
+// The dot is drawn by the orb overlay, which ignores the mouse. This small window
+// sits over it while Heyra is at rest so it shows a pointer and takes a click.
+// Hover itself is read from the pointer position each frame (see main.rs).
 
 use std::cell::Cell;
 use std::rc::Rc;
 
 pub struct Hotspot {
-    pub hovered: Rc<Cell<bool>>,
     pub clicked: Rc<Cell<bool>>,
 }
 
-const HOTSPOT: f32 = 22.;
-
-fn popup(origin: gpui::Point<gpui::Pixels>, size_: gpui::Size<gpui::Pixels>) -> WindowOptions {
-    WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(Bounds { origin, size: size_ })),
-        titlebar: None,
-        focus: false,
-        show: true,
-        kind: gpui::WindowKind::PopUp,
-        is_movable: false,
-        is_resizable: false,
-        is_minimizable: false,
-        window_background: gpui::WindowBackgroundAppearance::Transparent,
-        ..Default::default()
-    }
-}
+const HOTSPOT: f32 = 26.;
 
 pub fn open_hotspot(cx: &mut App, centre: (f64, f64), hotspot: Hotspot) -> Option<gpui::WindowHandle<Hotspot>> {
     let origin = point(px(centre.0 as f32 - HOTSPOT / 2.), px(centre.1 as f32 - HOTSPOT / 2.));
-    cx.open_window(popup(origin, size(px(HOTSPOT), px(HOTSPOT))), |_, cx| cx.new(|_| hotspot)).ok()
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds { origin, size: size(px(HOTSPOT), px(HOTSPOT)) })),
+            titlebar: None,
+            focus: false,
+            show: true,
+            kind: gpui::WindowKind::PopUp,
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            window_background: gpui::WindowBackgroundAppearance::Transparent,
+            ..Default::default()
+        },
+        |_, cx| cx.new(|_| hotspot),
+    )
+    .ok()
+    .inspect(|handle| {
+        let _ = handle.update(cx, |_, window, _| no_shadow(window));
+    })
+}
+
+/// macOS draws a shadow around even a clear window; the dot's target must not have one.
+#[allow(unexpected_cfgs)]
+fn no_shadow(window: &Window) {
+    use objc::runtime::{NO, Object};
+    use objc::{msg_send, sel, sel_impl};
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let Ok(handle) = HasWindowHandle::window_handle(window) else { return };
+    if let RawWindowHandle::AppKit(appkit) = handle.as_raw() {
+        unsafe {
+            let view = appkit.ns_view.as_ptr() as *mut Object;
+            let native: *mut Object = msg_send![view, window];
+            let _: () = msg_send![native, setHasShadow: NO];
+        }
+    }
 }
 
 impl Render for Hotspot {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let hovered = self.hovered.clone();
         let clicked = self.clicked.clone();
         // A barely-there fill: fully clear pixels would let clicks fall through.
         div()
@@ -694,51 +711,6 @@ impl Render for Hotspot {
             .rounded_full()
             .bg(alpha(GROUND, 0.012))
             .cursor_pointer()
-            .on_hover(move |over, _, _| hovered.set(*over))
             .on_click(move |_, _, _| clicked.set(true))
-    }
-}
-
-pub struct Hint;
-
-const HINT_W: f32 = 104.;
-const HINT_H: f32 = 26.;
-
-pub fn open_hint(cx: &mut App, centre: (f64, f64)) -> Option<gpui::WindowHandle<Hint>> {
-    let origin = point(px(centre.0 as f32 - HINT_W / 2.), px(centre.1 as f32 - HOTSPOT / 2. - 6. - HINT_H));
-    let handle = cx.open_window(popup(origin, size(px(HINT_W), px(HINT_H))), |_, cx| cx.new(|_| Hint)).ok()?;
-    let _ = handle.update(cx, |_, window, _| click_through(window));
-    Some(handle)
-}
-
-impl Render for Hint {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(6.))
-            .bg(alpha(RAIL, 0.96))
-            .border_1()
-            .border_color(rgb(HAIR))
-            .child(label("OPEN HEYRA").text_color(rgb(CREAM)))
-    }
-}
-
-/// Let clicks pass straight through a window.
-#[allow(unexpected_cfgs)]
-fn click_through(window: &Window) {
-    use objc::runtime::{Object, YES};
-    use objc::{msg_send, sel, sel_impl};
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    let Ok(handle) = HasWindowHandle::window_handle(window) else { return };
-    if let RawWindowHandle::AppKit(appkit) = handle.as_raw() {
-        unsafe {
-            let view = appkit.ns_view.as_ptr() as *mut Object;
-            let native: *mut Object = msg_send![view, window];
-            let _: () = msg_send![native, setIgnoresMouseEvents: YES];
-            let _: () = msg_send![native, setHasShadow: objc::runtime::NO];
-        }
     }
 }
