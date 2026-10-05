@@ -5,6 +5,7 @@
 mod engine;
 mod hotkey;
 mod model;
+mod orb;
 mod paste;
 mod record;
 mod setup;
@@ -52,10 +53,54 @@ fn transcribe_file(path: &str) {
     );
 }
 
+/// `heyra --preview-gauge`: the edge gauge alone with a fake voice, for design work.
+fn preview_gauge(state: worker::Shared) {
+    {
+        let state = state.clone();
+        std::thread::spawn(move || {
+            let start = std::time::Instant::now();
+            loop {
+                let t = start.elapsed().as_secs_f32();
+                let mut s = state.lock().unwrap();
+                s.phase = if t % 8.0 < 6.0 { Phase::Listening } else { Phase::Transcribing };
+                s.level = ((t * 3.1).sin() * 0.5 + 0.5) * ((t * 0.7).sin() * 0.35 + 0.55);
+                drop(s);
+                std::thread::sleep(Duration::from_millis(30));
+            }
+        });
+    }
+    Application::new().run(move |cx: &mut App| {
+        ui::open_pill(cx, state.clone());
+        cx.spawn(async move |cx| loop {
+            cx.background_executor().timer(Duration::from_millis(33)).await;
+            if cx.update(|cx| cx.refresh_windows()).is_err() {
+                break;
+            }
+        })
+        .detach();
+    });
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() == 3 && args[1] == "--file" {
         return transcribe_file(&args[2]);
+    }
+    if args.len() == 4 && args[1] == "--orb-png" {
+        // `heyra --orb-png out.png <voice 0..1 | writing>`: one orb frame, timed.
+        let style = orb::Style {
+            voice: args[3].parse().unwrap_or(0.0),
+            writing: args[3] == "writing",
+        };
+        let size = 300;
+        let started = std::time::Instant::now();
+        let mut bgra = orb::render(size, 2.3, &style);
+        eprintln!("frame in {:.1} ms", started.elapsed().as_secs_f32() * 1000.0);
+        for px in bgra.chunks_mut(4) {
+            px.swap(0, 2);
+        }
+        image::RgbaImage::from_raw(size as u32, size as u32, bgra).unwrap().save(&args[2]).unwrap();
+        return;
     }
     if args.len() == 2 && args[1] == "--fetch-model" {
         // Exercise the first-run download without the window.
@@ -74,6 +119,9 @@ fn main() {
     }
 
     let state = worker::new_state();
+    if args.len() == 2 && args[1] == "--preview-gauge" {
+        return preview_gauge(state);
+    }
     let (tx, rx) = mpsc::channel::<Cmd>();
 
     {

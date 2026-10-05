@@ -80,6 +80,9 @@ fn open_mic(state: &Shared, name: Option<&str>) -> Option<Recorder> {
     }
 }
 
+/// Longest single take; a held key past this is treated as a release.
+const MAX_TAKE_SECS: f32 = 300.0;
+
 pub fn run(state: Shared, cmds: Receiver<Cmd>) {
     {
         let mut s = state.lock().unwrap();
@@ -131,10 +134,14 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
         if down {
             state.lock().unwrap().level = recorder.level();
         }
-        if let Some(Cmd::Key(key)) = &cmd {
-            store::log(&format!("key {key:?}"));
-        }
+        // A stuck key must not record forever.
+        let cmd = if down && recorder.seconds() > MAX_TAKE_SECS { Some(Cmd::Key(Key::Up)) } else { cmd };
         match cmd {
+            Some(Cmd::Key(Key::Cancel)) if down => {
+                down = false;
+                recorder.end();
+                ready(&state);
+            }
             Some(Cmd::Key(Key::Down)) if !down => {
                 down = true;
                 recorder.begin();

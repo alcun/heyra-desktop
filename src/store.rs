@@ -17,7 +17,11 @@ pub fn dir() -> PathBuf {
 
 /// Append a line to heyra.log (in the data folder). Never logs what was said.
 pub fn log(line: &str) {
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(dir().join("heyra.log")) {
+    let path = dir().join("heyra.log");
+    if fs::metadata(&path).map(|m| m.len() > 1_000_000).unwrap_or(false) {
+        let _ = fs::rename(&path, dir().join("heyra.old.log"));
+    }
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(file, "{} {line}", now());
     }
 }
@@ -57,14 +61,9 @@ pub fn load_history() -> Vec<Entry> {
 }
 
 pub fn append_history(entry: &Entry) {
-    if let Ok(mut file) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dir().join("history.jsonl"))
-    {
-        if let Ok(line) = serde_json::to_string(entry) {
-            let _ = writeln!(file, "{line}");
-        }
+    let file = OpenOptions::new().create(true).append(true).open(dir().join("history.jsonl"));
+    if let (Ok(mut file), Ok(line)) = (file, serde_json::to_string(entry)) {
+        let _ = writeln!(file, "{line}");
     }
 }
 

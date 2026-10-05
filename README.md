@@ -6,7 +6,7 @@ Heyra turns speech into text on your own Mac with NVIDIA's Parakeet model. It go
 online once, to download the model on first launch. After that your voice and your
 words never leave the machine. No account, no subscription.
 
-> **Proof of concept.** macOS only for now (Apple Silicon or Intel, macOS 13+).
+> **Proof of concept.** macOS on Apple Silicon only, for now.
 
 ![Heyra](docs/screenshot.png)
 
@@ -28,7 +28,8 @@ Heyra lives in the menu bar. Open it from there to see your history.
 ## What it does
 
 - **Push to talk.** Hold fn. A small gauge on the right edge of the screen shows it's
-  listening. Let go and the text is pasted in, and your clipboard is put back.
+  listening. Let go and the text is pasted in, and your clipboard text is put back.
+  Pressing another key while holding fn (fn+arrow, fn+delete) cancels the take.
 - **Fast.** Six seconds of speech becomes text in about 0.4 s on an M-series Mac.
 - **History.** Every take is kept on your Mac. Click one to copy it again.
 - **Dictionary.** Fix words it mishears: `a cappy bar => capybara`.

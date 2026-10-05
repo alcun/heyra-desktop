@@ -81,6 +81,14 @@ impl Recorder {
         self.shared.recording.store(true, Ordering::SeqCst);
     }
 
+    /// Seconds recorded so far in this take.
+    pub fn seconds(&self) -> f32 {
+        if !self.shared.recording.load(Ordering::Relaxed) {
+            return 0.0;
+        }
+        self.shared.buffer.lock().unwrap().len() as f32 / self.sample_rate as f32
+    }
+
     /// Stop and hand back the clip (mono, at `sample_rate`).
     pub fn end(&self) -> Vec<f32> {
         self.shared.recording.store(false, Ordering::SeqCst);

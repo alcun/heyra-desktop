@@ -124,7 +124,7 @@ fn grouped(n: usize) -> String {
     let s = n.to_string();
     let mut out = String::new();
     for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -647,65 +647,101 @@ impl Render for Main {
     }
 }
 
-// ---- the edge gauge: a slim meter on the right edge while you talk ----
+// ---- the orb: Heyra's presence on the right edge while you talk ----
+//
+// Drawn per pixel by `orb.rs` (a dark glass sphere with ribbons of light inside)
+// and handed to GPUI as an image each frame. Voice is eased so it breathes.
 
 pub struct Pill {
     state: Shared,
-    born: Instant,
+    last: Instant,
+    clock: f32,
+    smooth: f32,
+    prev: Option<std::sync::Arc<gpui::RenderImage>>,
 }
 
-const GAUGE_W: f32 = 20.;
-const GAUGE_H: f32 = 132.;
-const GAUGE_STEPS: usize = 18;
+const ORB_BOX: f32 = 140.;
 
 pub fn open_pill(cx: &mut App, state: Shared) -> Option<WindowHandle<Pill>> {
-    let gauge = size(px(GAUGE_W), px(GAUGE_H));
+    let orb = size(px(ORB_BOX), px(ORB_BOX));
     let display = cx.primary_display()?.bounds();
     let origin = point(
-        display.origin.x + display.size.width - gauge.width - px(10.),
-        display.origin.y + (display.size.height - gauge.height) / 2.,
+        display.origin.x + display.size.width - orb.width - px(4.),
+        display.origin.y + (display.size.height - orb.height) / 2.,
     );
-    cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds { origin, size: gauge })),
-            titlebar: None,
-            focus: false,
-            show: true,
-            kind: WindowKind::PopUp,
-            is_movable: false,
-            is_resizable: false,
-            is_minimizable: false,
-            window_background: WindowBackgroundAppearance::Transparent,
-            ..Default::default()
-        },
-        |_, cx| cx.new(|_| Pill { state, born: Instant::now() }),
-    )
-    .ok()
+    let handle = cx
+        .open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds { origin, size: orb })),
+                titlebar: None,
+                focus: false,
+                show: true,
+                kind: WindowKind::PopUp,
+                is_movable: false,
+                is_resizable: false,
+                is_minimizable: false,
+                window_background: WindowBackgroundAppearance::Transparent,
+                ..Default::default()
+            },
+            |_, cx| {
+                cx.new(|_| Pill { state, last: Instant::now(), clock: 0.0, smooth: 0.0, prev: None })
+            },
+        )
+        .ok()?;
+    let _ = handle.update(cx, |_, window, _| ghost(window));
+    Some(handle)
+}
+
+/// No window shadow (it outlines the glow in white) and clicks pass straight through.
+#[allow(unexpected_cfgs)]
+fn ghost(window: &Window) {
+    use objc::runtime::{NO, Object, YES};
+    use objc::{msg_send, sel, sel_impl};
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let Ok(handle) = HasWindowHandle::window_handle(window) else { return };
+    if let RawWindowHandle::AppKit(appkit) = handle.as_raw() {
+        unsafe {
+            let view = appkit.ns_view.as_ptr() as *mut Object;
+            let native: *mut Object = msg_send![view, window];
+            let _: () = msg_send![native, setHasShadow: NO];
+            let _: () = msg_send![native, setIgnoresMouseEvents: YES];
+        }
+    }
 }
 
 impl Render for Pill {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let (phase, level) = {
             let s = self.state.lock().unwrap();
             (s.phase, s.level)
         };
-        let t = self.born.elapsed().as_secs_f32();
-        let lit = match phase {
-            Phase::Listening => ((level * 1.15).min(1.0) * GAUGE_STEPS as f32) as usize,
-            _ => ((t * 24.0) as usize) % GAUGE_STEPS,
-        };
-        div()
-            .size_full()
-            .rounded(px(5.))
-            .bg(alpha(RAIL, 0.94))
-            .border_1()
-            .border_color(rgb(if phase == Phase::Listening { REC } else { HAIR }))
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_between()
-            .py_2()
-            .child(meter(GAUGE_STEPS, lit, phase == Phase::Listening, false))
-            .child(light(phase))
+        let now = Instant::now();
+        let dt = now.duration_since(self.last).as_secs_f32().min(0.1);
+        self.last = now;
+        self.clock += dt;
+        let listening = phase == Phase::Listening;
+        // Ease toward the voice: quick to rise, slow to settle.
+        let target = if listening { (level * 1.25).min(1.0) } else { 0.0 };
+        let rate = if target > self.smooth { 0.4 } else { 0.08 };
+        self.smooth += (target - self.smooth) * rate;
+
+        let pixels = (ORB_BOX * window.scale_factor()) as usize;
+        let style = crate::orb::Style { voice: self.smooth, writing: !listening };
+        let bgra = crate::orb::render(pixels, self.clock, &style);
+        let frame = image::Frame::new(
+            image::RgbaImage::from_raw(pixels as u32, pixels as u32, bgra).expect("orb frame size"),
+        );
+        let image = std::sync::Arc::new(gpui::RenderImage::new([frame]));
+        let old = self.prev.replace(image.clone());
+        gpui::canvas(
+            |_, _, _| {},
+            move |bounds, _, window, _| {
+                if let Some(old) = old {
+                    let _ = window.drop_image(old);
+                }
+                let _ = window.paint_image(bounds, gpui::Corners::default(), image, 0, false);
+            },
+        )
+        .size_full()
     }
 }

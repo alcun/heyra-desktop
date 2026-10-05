@@ -2,6 +2,9 @@
 name = "heyra"
 version = "0.1.0"
 edition = "2024"
+description = "Hold fn, talk, let go: local push-to-talk dictation for macOS"
+license = "MIT"
+repository = "https://github.com/alcun/heyra-desktop"
 
 [dependencies]
 arboard = "3.6.1"
@@ -12,7 +15,9 @@ core-graphics = "0.24"
 cpal = "0.18.2"
 gpui = { version = "0.2.2", features = ["runtime_shaders"] }
 hound = "3.5.1"
+image = { version = "0.25", default-features = false, features = ["png"] }
 objc = "0.2"
+raw-window-handle = "0.6"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"
