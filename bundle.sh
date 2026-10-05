@@ -17,6 +17,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>LSUIElement</key><true/>
   <key>NSMicrophoneUsageDescription</key><string>Heyra listens while you hold the push-to-talk key, and turns speech into text on this Mac.</string>
 </dict></plist>
 PLIST

@@ -27,6 +27,7 @@ pub struct State {
     pub devices: Vec<String>,
     pub mic: Option<String>,
     pub mic_in_use: String,
+    pub sample_rate: u32,
     /// Something the user must fix before push-to-talk works (e.g. a permission).
     pub blocker: Option<String>,
 }
@@ -47,6 +48,7 @@ pub fn new_state() -> Shared {
         devices: Recorder::devices(),
         mic: store::load_settings().mic,
         mic_in_use: String::new(),
+        sample_rate: 0,
         blocker: None,
     }))
 }
@@ -61,7 +63,9 @@ fn fail(state: &Shared, message: String) {
 fn open_mic(state: &Shared, name: Option<&str>) -> Option<Recorder> {
     match Recorder::open(name) {
         Ok(recorder) => {
-            state.lock().unwrap().mic_in_use = recorder.device_name.clone();
+            let mut s = state.lock().unwrap();
+            s.mic_in_use = recorder.device_name.clone();
+            s.sample_rate = recorder.sample_rate;
             Some(recorder)
         }
         Err(e) => {
@@ -109,7 +113,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                 recorder.begin();
                 let mut s = state.lock().unwrap();
                 s.phase = Phase::Listening;
-                s.message = "Listening…".into();
+                s.message = "Recording".into();
             }
             Some(Cmd::Key(Key::Up)) if down => {
                 down = false;
@@ -127,7 +131,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                 {
                     let mut s = state.lock().unwrap();
                     s.phase = Phase::Transcribing;
-                    s.message = "Writing…".into();
+                    s.message = "Writing".into();
                     s.level = 0.0;
                 }
                 let started = Instant::now();
@@ -140,13 +144,11 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                         Ok(()) => store::log("pasted"),
                         Err(e) => store::log(&format!("paste failed: {e}")),
                     }
-                    let entry = Entry { at: store::now(), text, secs };
+                    let entry = Entry { at: store::now(), text, secs, took };
                     store::append_history(&entry);
                     state.lock().unwrap().history.push(entry);
                 }
                 ready(&state);
-                state.lock().unwrap().message =
-                    format!("Hold fn and talk · last: {secs:.1}s of speech in {took:.2}s");
             }
             Some(Cmd::SetMic(name)) if !down => {
                 drop(recorder);

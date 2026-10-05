@@ -34,6 +34,9 @@ pub struct Entry {
     pub text: String,
     /// Seconds of speech.
     pub secs: f32,
+    /// Seconds from release to text.
+    #[serde(default)]
+    pub took: f32,
 }
 
 impl Entry {

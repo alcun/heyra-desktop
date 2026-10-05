@@ -7,9 +7,11 @@ mod hotkey;
 mod paste;
 mod record;
 mod store;
+mod tray;
 mod ui;
 mod worker;
 
+use std::borrow::Cow;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -97,7 +99,17 @@ fn main() {
         });
     }
     app.run(move |cx: &mut App| {
+        let _ = cx.text_system().add_fonts(vec![
+            Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexSans-Medium.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexSans-SemiBold.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexMono-Regular.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexMono-Medium.ttf").as_slice()),
+        ]);
         ui::open_main(cx, state.clone(), tx.clone());
+        let tray = tray::Tray::new();
+        let main_state = state.clone();
+        let main_tx = tx.clone();
 
         // Redraw ~30 times a second, and show the pill while listening or writing.
         let state = state.clone();
@@ -108,6 +120,20 @@ fn main() {
                 let phase = state.lock().unwrap().phase;
                 let busy = matches!(phase, Phase::Listening | Phase::Transcribing);
                 let ok = cx.update(|cx| {
+                    match tray.as_ref().and_then(|t| t.poll()) {
+                        Some(tray::Action::Open) => {
+                            let existing = cx.windows().into_iter().find_map(|w| w.downcast::<ui::Main>());
+                            match existing {
+                                Some(w) => {
+                                    let _ = w.update(cx, |_, window, _| window.activate_window());
+                                }
+                                None => ui::open_main(cx, main_state.clone(), main_tx.clone()),
+                            }
+                            cx.activate(true);
+                        }
+                        Some(tray::Action::Quit) => cx.quit(),
+                        None => {}
+                    }
                     match (&pill, busy) {
                         (None, true) => pill = ui::open_pill(cx, state.clone()),
                         (Some(handle), false) => {
