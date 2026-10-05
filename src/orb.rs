@@ -1,13 +1,20 @@
-//! The orb, drawn per pixel on the CPU like a small fragment shader: a dark glass
-//! sphere with light flowing inside it, a lit rim, a specular highlight, a soft
-//! halo and a turning dotted ring. Voice brightens and stirs it; writing turns it gold.
+//! The orb, drawn per pixel on the CPU like a small fragment shader: a living
+//! atmosphere rather than a ball. Venus-like cloud bands wrap a slowly turning
+//! globe, warped by flowing turbulence; the limb dissolves into a lit haze and the
+//! silhouette itself drifts. Voice stirs and brightens it; writing turns it gold.
 //!
 //! Output is BGRA with straight alpha, which is what GPUI's sprite atlas takes.
+
+use rayon::prelude::*;
 
 type V3 = [f32; 3];
 
 fn mix(a: V3, b: V3, t: f32) -> V3 {
     [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
+}
+
+fn add(a: V3, b: V3, k: f32) -> V3 {
+    [a[0] + b[0] * k, a[1] + b[1] * k, a[2] + b[2] * k]
 }
 
 fn hex(c: u32) -> V3 {
@@ -19,6 +26,101 @@ fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
+// ---- smooth 3D gradient noise (Perlin) ----
+
+const PERM: [u8; 256] = {
+    // A fixed shuffle of 0..=255 (xorshift, seeded), built at compile time.
+    let mut p = [0u8; 256];
+    let mut i = 0;
+    while i < 256 {
+        p[i] = i as u8;
+        i += 1;
+    }
+    let mut s: u32 = 0x9e37_79b9;
+    let mut i = 255;
+    while i > 0 {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        let j = (s % (i as u32 + 1)) as usize;
+        let t = p[i];
+        p[i] = p[j];
+        p[j] = t;
+        i -= 1;
+    }
+    p
+};
+
+fn perm(i: i32) -> usize {
+    PERM[(i & 255) as usize] as usize
+}
+
+fn grad(h: usize, x: f32, y: f32, z: f32) -> f32 {
+    match h & 15 {
+        0 => x + y,
+        1 => -x + y,
+        2 => x - y,
+        3 => -x - y,
+        4 => x + z,
+        5 => -x + z,
+        6 => x - z,
+        7 => -x - z,
+        8 => y + z,
+        9 => -y + z,
+        10 => y - z,
+        11 => -y - z,
+        12 => x + y,
+        13 => -y + z,
+        14 => -x + y,
+        _ => -y - z,
+    }
+}
+
+/// Perlin noise, roughly -1..1.
+fn noise(x: f32, y: f32, z: f32) -> f32 {
+    let (xi, yi, zi) = (x.floor() as i32, y.floor() as i32, z.floor() as i32);
+    let (xf, yf, zf) = (x - x.floor(), y - y.floor(), z - z.floor());
+    let fade = |t: f32| t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+    let (u, v, w) = (fade(xf), fade(yf), fade(zf));
+    let p = |i: i32| perm(i) as i32;
+    let a = p(xi) + yi;
+    let aa = p(a) + zi;
+    let ab = p(a + 1) + zi;
+    let b = p(xi + 1) + yi;
+    let ba = p(b) + zi;
+    let bb = p(b + 1) + zi;
+    let l = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    l(
+        l(
+            l(grad(perm(aa), xf, yf, zf), grad(perm(ba), xf - 1., yf, zf), u),
+            l(grad(perm(ab), xf, yf - 1., zf), grad(perm(bb), xf - 1., yf - 1., zf), u),
+            v,
+        ),
+        l(
+            l(grad(perm(aa + 1), xf, yf, zf - 1.), grad(perm(ba + 1), xf - 1., yf, zf - 1.), u),
+            l(
+                grad(perm(ab + 1), xf, yf - 1., zf - 1.),
+                grad(perm(bb + 1), xf - 1., yf - 1., zf - 1.),
+                u,
+            ),
+            v,
+        ),
+        w,
+    )
+}
+
+fn fbm(mut x: f32, mut y: f32, mut z: f32, octaves: u32) -> f32 {
+    let (mut sum, mut amp) = (0.0, 0.5);
+    for _ in 0..octaves {
+        sum += amp * noise(x, y, z);
+        x = x * 2.03 + 1.7;
+        y = y * 2.03 - 3.1;
+        z = z * 2.03 + 0.9;
+        amp *= 0.5;
+    }
+    sum
+}
+
 pub struct Style {
     pub voice: f32,
     pub writing: bool,
@@ -26,91 +128,105 @@ pub struct Style {
 
 /// Render a `size`×`size` frame at time `t` (seconds).
 pub fn render(size: usize, t: f32, style: &Style) -> Vec<u8> {
-    let graphite = hex(0x15161b);
-    let slate = hex(0x6f8493);
+    let night = hex(0x14151b);
+    let umber = hex(0x4a3524);
+    let ochre = hex(0xb07d45);
     let gold = hex(0xd9a86a);
-    let cream = hex(0xede0c4);
+    let cream = hex(0xf2e6cc);
+    let lavender = hex(0x9a94b4);
     let v = style.voice.clamp(0.0, 1.0);
     let writing = style.writing;
 
-    let radius = 0.42 + 0.06 * v - if writing { 0.03 } else { 0.0 };
-    let flow = t * if writing { 1.6 } else { 0.35 + 0.9 * v };
-    let glow_strength = if writing { 0.55 } else { 0.25 + 0.6 * v };
-    let ring_r = radius * (1.42 + 0.12 * v);
-    let ring_spin = t * if writing { 2.4 } else { 0.25 + 0.6 * v };
-    let light = {
-        let l: V3 = [-0.45, -0.6, 0.66];
+    let radius = 0.5 + 0.05 * v - if writing { 0.03 } else { 0.0 };
+    let spin = t * if writing { 0.9 } else { 0.08 + 0.25 * v };
+    let churn = t * if writing { 0.5 } else { 0.12 + 0.35 * v };
+    let turbulence = 0.9 + 1.4 * v + if writing { 0.6 } else { 0.0 };
+    let brightness = 0.75 + 0.45 * v + if writing { 0.25 } else { 0.0 };
+    let haze = 0.35 + 0.55 * v + if writing { 0.2 } else { 0.0 };
+    let light: V3 = {
+        let l: V3 = [-0.55, -0.45, 0.7];
         let n = (l[0] * l[0] + l[1] * l[1] + l[2] * l[2]).sqrt();
         l.map(|x| x / n)
     };
 
-    let mut out = vec![0u8; size * size * 4];
     let px = 2.0 / size as f32;
-    for j in 0..size {
+    let mut out = vec![0u8; size * size * 4];
+    out.par_chunks_mut(size * 4).enumerate().for_each(|(j, row)| {
+        let y = (j as f32 + 0.5) * px - 1.0;
         for i in 0..size {
             let x = (i as f32 + 0.5) * px - 1.0;
-            let y = (j as f32 + 0.5) * px - 1.0;
             let d = (x * x + y * y).sqrt();
+            // The silhouette drifts: the edge breathes with slow noise around the rim.
+            let angle = y.atan2(x);
+            let wisp = noise(angle.cos() * 1.6 + churn * 0.7, angle.sin() * 1.6, t * 0.15) * (0.012 + 0.02 * v);
+            let edge = radius * (1.0 + wisp);
 
-            let (mut rgb, mut a);
-            if d < radius + px {
-                // Inside the sphere.
-                let (nx, ny) = (x / radius, y / radius);
+            let mut rgb = [0.0f32; 3];
+            let mut a = 0.0f32;
+            if d < edge * 1.02 {
+                let (nx, ny) = (x / edge, y / edge);
                 let nz = (1.0 - nx * nx - ny * ny).max(0.0).sqrt();
-                // Light flowing inside: silky ribbons from layered, self-warping sines.
-                let (qx, qy, qz) = (nx * 2.2, ny * 2.2, nz * 2.2);
-                let w1 = (qx * 1.7 + flow).sin() + (qy * 2.3 - flow * 0.8).sin();
-                let w2 = (qz * 1.9 + flow * 1.2 + w1).sin();
-                let ribbon = 0.5 + 0.5 * (qx * 2.1 + qy * 1.3 + w2 * 1.6 + flow * 0.6).sin();
-                let veil = 0.5 + 0.5 * (qy * 2.7 - qz * 1.1 + w1 * 1.3 - flow * 0.9).sin();
-                let energy = 0.35 + 0.65 * v.max(if writing { 0.75 } else { 0.0 });
-                let gold_light = smoothstep(0.62, 1.0, ribbon) * energy;
-                let slate_light = smoothstep(0.5, 1.0, veil) * (0.25 + 0.35 * energy);
-                let core_light = smoothstep(0.75, 1.0, ribbon * veil) * energy;
-                rgb = graphite;
-                let glow = |c: V3, k: f32, rgb: V3| -> V3 { [rgb[0] + c[0] * k, rgb[1] + c[1] * k, rgb[2] + c[2] * k] };
-                rgb = glow(if writing { gold } else { slate }, slate_light * 0.55, rgb);
-                rgb = glow(gold, gold_light * 0.85, rgb);
-                rgb = glow(cream, core_light * 0.7, rgb);
-                // Lit glass: soft lambert, a cream rim, a sharp highlight.
-                let lambert = (nx * light[0] + ny * light[1] + nz * light[2]).max(0.0);
-                rgb = rgb.map(|c| c * (0.55 + 0.6 * lambert));
-                let fresnel = (1.0 - nz).powf(2.6);
-                rgb = mix(rgb, cream, (fresnel * (0.55 + 0.4 * v)).min(1.0));
-                let h = [light[0], light[1], light[2] + 1.0];
-                let hn = (h[0] * h[0] + h[1] * h[1] + h[2] * h[2]).sqrt();
-                let spec = ((nx * h[0] + ny * h[1] + nz * h[2]) / hn).max(0.0).powf(48.0);
-                rgb = rgb.map(|c| (c + spec * 0.9).min(1.0));
-                a = 1.0 - smoothstep(radius - px, radius + px, d);
-                // Blend the halo under the antialiased edge.
-                if a < 1.0 {
-                    let halo = glow_strength * 0.9;
-                    rgb = mix(gold, rgb, a);
-                    a = a + (1.0 - a) * halo;
+                // Spherical coordinates on a turning globe.
+                let lon = nx.atan2(nz) * 0.9 + spin;
+                let lat = ny.clamp(-1.0, 1.0).asin();
+                let (sx, sy, sz) = (lon.cos(), lat * 2.2, lon.sin());
+                // Domain-warped clouds, broad and soft, stretched into latitude sweeps.
+                let wx = fbm(sx * 0.9, sy * 0.8 + churn, sz * 0.9, 2);
+                let wy = fbm(sx * 0.9 + 5.2, sy * 0.8 - churn * 0.8, sz * 0.9 + 1.3, 2);
+                let clouds = fbm(
+                    sx * 1.1 + wx * turbulence,
+                    sy * 1.9 + wy * turbulence * 0.7 + churn * 0.4,
+                    sz * 1.1 + wy * turbulence,
+                    2,
+                ) * 0.5
+                    + 0.5;
+                let sweep = 0.5 + 0.5 * (lat * 4.0 + wx * 2.0 * turbulence + churn).sin();
+                let c = (clouds * 0.75 + sweep * 0.25).clamp(0.0, 1.0);
+
+                // A pale, luminous body; ochre sweeps; lavender in the deepest folds.
+                rgb = mix(ochre, gold, smoothstep(0.2, 0.55, c));
+                rgb = mix(rgb, cream, smoothstep(0.5, 0.85, c));
+                rgb = mix(rgb, umber, smoothstep(0.32, 0.1, c) * 0.45);
+                rgb = mix(rgb, lavender, smoothstep(0.4, 0.15, c) * 0.35);
+                if writing {
+                    rgb = mix(rgb, gold, 0.3);
                 }
-            } else {
-                // Halo: warm light falling off from the rim.
-                let fall = (-(d - radius) * 9.0).exp();
-                a = fall * glow_strength;
-                rgb = mix(gold, cream, fall);
-                // The dotted ring, turning.
-                let ring = 1.0 - smoothstep(0.0, px * 1.4, (d - ring_r).abs());
-                if ring > 0.0 {
-                    let angle = y.atan2(x) + ring_spin;
-                    let dots = 0.5 + 0.5 * (angle * 48.0).cos();
-                    let dot = smoothstep(0.55, 0.9, dots) * ring * (0.35 + 0.4 * v);
-                    rgb = mix(rgb, cream, dot / (a + dot).max(1e-3));
-                    a = a + dot * (1.0 - a);
-                }
+                // Soft daylight with a long twilight; the night side glows lavender, not black.
+                let lambert = nx * light[0] + ny * light[1] + nz * light[2];
+                let day = smoothstep(-0.5, 0.7, lambert);
+                let dusk = mix(mix(lavender, night, 0.35), rgb, 0.25);
+                rgb = mix(dusk, rgb, 0.35 + 0.65 * day).map(|ch| ch * brightness);
+                // Bright haze at the limb, like sunlight scattering through thick air.
+                // Strongest right at the edge, and lit on the night side too, so the
+                // rim never reads as a dark outline.
+                let limb = (1.0 - nz).powf(1.3);
+                rgb = add(rgb, mix(gold, cream, 0.6), limb * (0.55 + 0.4 * v) * (0.7 + 0.3 * day));
+                // Gaseous: the body is faintly translucent and dissolves at the edge.
+                a = smoothstep(edge * 1.02, edge * 0.9, d) * (0.88 + 0.12 * c);
+            }
+            // Outer haze: warm light falling off past the edge.
+            let past = (d - edge).max(0.0);
+            let fall = 0.6 * (-past * 11.0).exp() + 0.4 * (-past * 4.0).exp();
+            let halo = fall * haze * smoothstep(edge * 0.9, edge * 1.0, d);
+            if halo > 0.0 {
+                let hc = mix(gold, cream, fall * 0.6);
+                let total = a + halo * (1.0 - a);
+                rgb = mix(hc, rgb, if total > 0.0 { a / total } else { 0.0 });
+                a = total;
             }
 
-            let o = (j * size + i) * 4;
-            let a = a.clamp(0.0, 1.0);
-            out[o] = (rgb[2].clamp(0.0, 1.0) * 255.0) as u8;
-            out[o + 1] = (rgb[1].clamp(0.0, 1.0) * 255.0) as u8;
-            out[o + 2] = (rgb[0].clamp(0.0, 1.0) * 255.0) as u8;
-            out[o + 3] = (a * 255.0) as u8;
+            // Keep bright light from clipping channel by channel (which shifts the hue
+            // toward cyan): scale the whole colour down instead.
+            let peak = rgb[0].max(rgb[1]).max(rgb[2]);
+            if peak > 1.0 {
+                rgb = rgb.map(|ch| ch / peak);
+            }
+            let o = i * 4;
+            row[o] = (rgb[2].clamp(0.0, 1.0) * 255.0) as u8;
+            row[o + 1] = (rgb[1].clamp(0.0, 1.0) * 255.0) as u8;
+            row[o + 2] = (rgb[0].clamp(0.0, 1.0) * 255.0) as u8;
+            row[o + 3] = (a.clamp(0.0, 1.0) * 255.0) as u8;
         }
-    }
+    });
     out
 }
