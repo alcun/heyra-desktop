@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.5
+
+- Welcome: fn drawn as the key (🌐 fn), plainer wording, and the last step mentions
+  History and choosing another key in Settings.
+
 ## 0.3.4
 
 - Set up an FX mic (TING) from Heyra: plug it in over USB-C, then Settings → Set up this FX

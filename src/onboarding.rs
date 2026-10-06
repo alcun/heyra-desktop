@@ -115,7 +115,21 @@ impl Onboarding {
     }
 }
 
-/// The fn key, drawn as a key.
+/// The globe printed on the fn key, in thin lines: an outline, a meridian, the equator.
+fn globe() -> gpui::Div {
+    let line = alpha(CREAM, 0.75);
+    div()
+        .relative()
+        .flex_none()
+        .size(px(10.))
+        .rounded_full()
+        .border_1()
+        .border_color(line)
+        .child(div().absolute().top(px(-1.)).left(px(2.5)).w(px(3.)).h(px(10.)).rounded_full().border_1().border_color(line))
+        .child(div().absolute().top(px(3.5)).left(px(0.)).w(px(8.)).h(px(1.)).bg(line))
+}
+
+/// The fn key, drawn as a key: 🌐 fn.
 fn keycap() -> gpui::Div {
     div()
         .flex_none()
@@ -123,6 +137,7 @@ fn keycap() -> gpui::Div {
         .h(px(20.))
         .flex()
         .items_center()
+        .gap(px(4.))
         .rounded(px(5.))
         .border_1()
         .border_b_2()
@@ -131,6 +146,7 @@ fn keycap() -> gpui::Div {
         .font_family(MONO)
         .text_size(px(11.5))
         .text_color(rgb(CREAM))
+        .child(globe())
         .child("fn")
 }
 
@@ -199,34 +215,34 @@ impl Render for Onboarding {
         let (title, words, main, other): (String, String, Option<&'static str>, Option<&'static str>) = match self.step {
             Step::Welcome => (
                 "Heyra".into(),
-                "Hold fn, talk, let go.\nYour words appear wherever you type, written here on this Mac.".into(),
+                "Hold fn, talk, let go.\nYour words appear where you're typing. Nothing leaves this Mac.".into(),
                 Some("Begin"),
                 None,
             ),
             Step::Microphone => match mic {
                 Mic::Allowed => ("Say something".into(), "The orb follows your voice.".into(), Some("Continue"), None),
                 Mic::Denied => (
-                    "The microphone is off".into(),
-                    "Turn on Heyra in Privacy & Security → Microphone.".into(),
+                    "Microphone is off".into(),
+                    "Turn Heyra on in Privacy & Security → Microphone.".into(),
                     Some("Open Settings"),
                     Some("Skip"),
                 ),
                 Mic::Unknown => (
-                    "First, your microphone".into(),
-                    "Heyra only listens while you hold the key.".into(),
+                    "Microphone".into(),
+                    "Heyra only listens while you hold fn.".into(),
                     Some("Allow microphone"),
                     None,
                 ),
             },
             Step::Access => (
-                "Then, typing".into(),
-                "Accessibility lets Heyra hear fn and type your words.\nTurn on Heyra in the list.".into(),
+                "Accessibility".into(),
+                "So Heyra can hear fn and type for you.\nTurn Heyra on in the list that opens.".into(),
                 Some("Open Settings"),
                 Some("Skip"),
             ),
             Step::FnKey => (
-                "One small change".into(),
-                "So fn doesn't open the emoji picker:\nKeyboard → Press 🌐 key to → Do Nothing.".into(),
+                "The fn key".into(),
+                "Keyboard → Press 🌐 key to → Do Nothing,\nso fn doesn't also open emoji.".into(),
                 Some("Open Keyboard Settings"),
                 Some("Skip"),
             ),
@@ -234,7 +250,7 @@ impl Render for Onboarding {
             Step::Try if loading => (
                 "Almost ready".into(),
                 format!(
-                    "Getting the voice model, just this once{}",
+                    "Downloading the voice model, once{}",
                     progress.map(|p| format!(" · {}%", (p * 100.) as u32)).unwrap_or_default()
                 ),
                 None,
@@ -243,7 +259,7 @@ impl Render for Onboarding {
             Step::Try => ("Try it".into(), "Hold fn and say something.\nLet go when you're done.".into(), None, Some("Skip")),
             Step::Ready => (
                 "You're ready".into(),
-                "Click into any text box, hold fn and talk.\nDouble-tap fn to talk hands-free.\nHeyra lives in the dot at the bottom of your screen.".into(),
+                "Click into any text box, hold fn and talk.\nDouble-tap fn for hands-free. Another key can be set in Settings.\nEvery take is kept in History, on this Mac, to copy again.\nHeyra lives in the dot at the bottom of your screen.".into(),
                 Some("Start"),
                 Some("Open Heyra"),
             ),
