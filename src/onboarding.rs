@@ -115,6 +115,50 @@ impl Onboarding {
     }
 }
 
+/// The fn key, drawn as a key.
+fn keycap() -> gpui::Div {
+    div()
+        .flex_none()
+        .px(px(6.))
+        .h(px(20.))
+        .flex()
+        .items_center()
+        .rounded(px(5.))
+        .border_1()
+        .border_b_2()
+        .border_color(alpha(CREAM, 0.22))
+        .bg(alpha(CREAM, 0.06))
+        .font_family(MONO)
+        .text_size(px(11.5))
+        .text_color(rgb(CREAM))
+        .child("fn")
+}
+
+/// One line of text, with "fn" shown as the key.
+fn line(text: &str) -> gpui::Div {
+    let mut row = div().flex().flex_wrap().justify_center().items_center().gap(px(5.));
+    let mut run = String::new();
+    for word in text.split(' ') {
+        let rest = word.strip_prefix("fn").filter(|r| r.chars().all(|c| !c.is_alphanumeric()));
+        let Some(rest) = rest else {
+            if !run.is_empty() {
+                run.push(' ');
+            }
+            run.push_str(word);
+            continue;
+        };
+        if !run.is_empty() {
+            row = row.child(div().child(std::mem::take(&mut run)));
+        }
+        // Punctuation stays against the key: "fn,".
+        row = row.child(div().flex().items_center().child(keycap()).children((!rest.is_empty()).then(|| rest.to_string())));
+    }
+    if !run.is_empty() {
+        row = row.child(div().child(run));
+    }
+    row
+}
+
 /// A soft rounded button; the main one is lit.
 fn pill(id: &'static str, text: impl Into<gpui::SharedString>, main: bool) -> Stateful<gpui::Div> {
     div()
@@ -273,7 +317,7 @@ impl Render for Onboarding {
                     .text_size(px(14.))
                     .line_height(px(22.))
                     .text_color(rgb(SLATE))
-                    .children(words.lines().map(|l| div().child(l.to_string())).collect::<Vec<_>>()),
+                    .children(words.lines().map(line).collect::<Vec<_>>()),
             )
             .child(
                 div()
