@@ -22,6 +22,9 @@ struct Shared {
     level: AtomicU32,
     buffer: Mutex<Vec<f32>>,
     pre_roll: usize,
+    /// Listens for a TING's chirps; only at 48 kHz, which the chirps are made for.
+    ting: Option<Mutex<crate::ting::Decoder>>,
+    ting_events: Mutex<Vec<crate::ting::Event>>,
 }
 
 impl Recorder {
@@ -59,6 +62,8 @@ impl Recorder {
             level: AtomicU32::new(0),
             buffer: Mutex::new(Vec::new()),
             pre_roll: (sample_rate as f32 * PRE_ROLL_SECS) as usize,
+            ting: (sample_rate == crate::ting::RATE).then(Default::default),
+            ting_events: Mutex::new(Vec::new()),
         });
 
         let err = |e| eprintln!("audio: {e}");
@@ -87,6 +92,11 @@ impl Recorder {
             return 0.0;
         }
         self.shared.buffer.lock().unwrap().len() as f32 / self.sample_rate as f32
+    }
+
+    /// TING squeezes and button presses heard since the last call.
+    pub fn ting_events(&self) -> Vec<crate::ting::Event> {
+        std::mem::take(&mut *self.shared.ting_events.lock().unwrap())
     }
 
     /// Stop and hand back the clip (mono, at `sample_rate`).
@@ -118,6 +128,13 @@ where
                     buffer.push(sum / channels as f32);
                 }
                 let fresh = &buffer[start..];
+                if let Some(ting) = &shared.ting {
+                    let mut events = Vec::new();
+                    ting.lock().unwrap().process(fresh, &mut events);
+                    if !events.is_empty() {
+                        shared.ting_events.lock().unwrap().extend(events);
+                    }
+                }
                 if !fresh.is_empty() {
                     let rms = (fresh.iter().map(|x| x * x).sum::<f32>() / fresh.len() as f32).sqrt();
                     shared.level.store((rms * 8.0).min(1.0).to_bits(), Ordering::Relaxed);

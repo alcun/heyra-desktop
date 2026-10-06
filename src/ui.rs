@@ -501,9 +501,9 @@ impl Main {
     }
 
     fn settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (devices, chosen, in_use) = {
+        let (devices, chosen, in_use, ting_heard) = {
             let s = self.state.lock().unwrap();
-            (s.devices.clone(), s.mic.clone(), s.mic_in_use.clone())
+            (s.devices.clone(), s.mic.clone(), s.mic_in_use.clone(), s.ting_heard)
         };
         let mut rows: Vec<AnyElement> = Vec::new();
         let options = std::iter::once((String::from("System default"), None))
@@ -553,7 +553,35 @@ impl Main {
                 section("PUSH TO TALK")
                     .child(div().text_sm().text_color(rgb(CREAM)).child("Hold fn, talk, let go."))
                     .child(hint("Double-tap fn for hands-free; tap fn or ✓ to paste, ✕ to keep it in History only."))
-                    .child(hint("A Teenage Engineering TING works too: its squeeze sends ctrl+opt+F12."))
+                    .child({
+                        let recording = crate::hotkey::recording();
+                        let chosen = crate::hotkey::button();
+                        let text = if recording {
+                            "Press the key or mouse button to use (esc cancels)…".to_string()
+                        } else {
+                            chosen.map_or("Another button: none".into(), |b| format!("Another button: {}", crate::hotkey::name(b)))
+                        };
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .pt_1()
+                            .child(div().text_sm().text_color(rgb(if recording { GOLD } else { CREAM })).child(text))
+                            .child(button("choose", "CHOOSE").on_click(|_, _, _| crate::hotkey::record(true)))
+                            .when(chosen.is_some() && !recording, |d| {
+                                d.child(button("clear", "CLEAR").on_click(|_, _, _| {
+                                    crate::hotkey::set_button(None);
+                                    let settings = store::load_settings();
+                                    store::save_settings(&store::Settings { button: None, ..settings });
+                                }))
+                            })
+                    })
+                    .child(hint("Any key, key combo or extra mouse button: a foot pedal, a macro pad, a mic's button that types a key."))
+                    .child(hint(if ting_heard {
+                        "TING heard on this microphone: squeeze to talk, bottom button for Enter, middle to undo."
+                    } else {
+                        "A Teenage Engineering TING works too: choose its line-in as the microphone, then squeeze."
+                    }))
                     .child(hint("If fn opens the emoji picker: System Settings → Keyboard → Press 🌐 key to → Do nothing.")),
             )
             .child({

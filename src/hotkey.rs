@@ -1,7 +1,11 @@
 //! Push-to-talk keys (macOS): hold fn, or ctrl+opt+F12, which is what a TING
-//! sends through tingle + tinghold. Needs the Accessibility permission.
+//! sends through tingle + tinghold, or a key or mouse button the user chose.
+//! Needs the Accessibility permission.
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+
+use crate::store::Button;
 
 use core_foundation::base::TCFType;
 use core_foundation::mach_port::CFMachPortRef;
@@ -42,6 +46,73 @@ pub fn trusted(prompt: bool) -> bool {
     }
 }
 
+const ESCAPE: i64 = 53;
+
+/// The user's own push-to-talk button, if any.
+static BUTTON: Mutex<Option<Button>> = Mutex::new(None);
+/// The next key or mouse button pressed becomes the button.
+static RECORDING: AtomicBool = AtomicBool::new(false);
+
+fn modifiers(flags: CGEventFlags) -> u64 {
+    (flags
+        & (CGEventFlags::CGEventFlagCommand
+            | CGEventFlags::CGEventFlagControl
+            | CGEventFlags::CGEventFlagAlternate
+            | CGEventFlags::CGEventFlagShift))
+        .bits()
+}
+
+pub fn set_button(button: Option<Button>) {
+    *BUTTON.lock().unwrap() = button;
+}
+
+pub fn button() -> Option<Button> {
+    *BUTTON.lock().unwrap()
+}
+
+/// Listen for the next press and make it the button; escape cancels.
+pub fn record(on: bool) {
+    RECORDING.store(on, Ordering::Relaxed);
+}
+
+pub fn recording() -> bool {
+    RECORDING.load(Ordering::Relaxed)
+}
+
+/// "⌃⌥F12", "Mouse button 4".
+pub fn name(button: Button) -> String {
+    if button.mouse {
+        return format!("Mouse button {}", button.code + 1);
+    }
+    let flags = CGEventFlags::from_bits_truncate(button.mods);
+    let mut out = String::new();
+    for (flag, mark) in [
+        (CGEventFlags::CGEventFlagControl, "⌃"),
+        (CGEventFlags::CGEventFlagAlternate, "⌥"),
+        (CGEventFlags::CGEventFlagShift, "⇧"),
+        (CGEventFlags::CGEventFlagCommand, "⌘"),
+    ] {
+        if flags.contains(flag) {
+            out.push_str(mark);
+        }
+    }
+    const LETTERS: &str = "asdfhgzxcv?bqweryt123465=97-80]ou[ip?lj'k;\\,/nm.";
+    let key = match button.code {
+        122 => "F1".into(), 120 => "F2".into(), 99 => "F3".into(), 118 => "F4".into(),
+        96 => "F5".into(), 97 => "F6".into(), 98 => "F7".into(), 100 => "F8".into(),
+        101 => "F9".into(), 109 => "F10".into(), 103 => "F11".into(), 111 => "F12".into(),
+        105 => "F13".into(), 107 => "F14".into(), 113 => "F15".into(), 106 => "F16".into(),
+        64 => "F17".into(), 79 => "F18".into(), 80 => "F19".into(), 90 => "F20".into(),
+        36 => "Return".into(), 48 => "Tab".into(), 49 => "Space".into(), 51 => "Delete".into(),
+        117 => "Forward Delete".into(), 115 => "Home".into(), 119 => "End".into(),
+        116 => "Page Up".into(), 121 => "Page Down".into(),
+        123 => "←".into(), 124 => "→".into(), 125 => "↓".into(), 126 => "↑".into(), 50 => "`".into(),
+        c @ 0..=47 => LETTERS.chars().nth(c as usize).filter(|&c| c != '?').map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| format!("key {c}")),
+        c => format!("key {c}"),
+    };
+    out + &key
+}
+
 /// The tap's port, so the callback can switch the tap back on if macOS turns it off.
 static TAP: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
 
@@ -49,11 +120,18 @@ static TAP: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
 /// disables a tap that keeps it waiting, so it only flips flags and sends.
 pub fn listen(on_key: impl Fn(Key) + 'static) -> Result<(), String> {
     let fn_held = AtomicBool::new(false);
+    let button_held = AtomicBool::new(false);
     let tap = CGEventTap::new(
         CGEventTapLocation::HID,
         CGEventTapPlacement::HeadInsertEventTap,
         CGEventTapOptions::Default,
-        vec![CGEventType::FlagsChanged, CGEventType::KeyDown, CGEventType::KeyUp],
+        vec![
+            CGEventType::FlagsChanged,
+            CGEventType::KeyDown,
+            CGEventType::KeyUp,
+            CGEventType::OtherMouseDown,
+            CGEventType::OtherMouseUp,
+        ],
         move |_, kind, event| {
             if matches!(kind, CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput) {
                 let port = TAP.load(Ordering::Relaxed);
@@ -62,8 +140,47 @@ pub fn listen(on_key: impl Fn(Key) + 'static) -> Result<(), String> {
                 }
                 return Some(event.clone());
             }
-            let code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
+            let mouse = matches!(kind, CGEventType::OtherMouseDown | CGEventType::OtherMouseUp);
+            let code = event.get_integer_value_field(if mouse {
+                EventField::MOUSE_EVENT_BUTTON_NUMBER
+            } else {
+                EventField::KEYBOARD_EVENT_KEYCODE
+            });
             let flags = event.get_flags();
+            let down = matches!(kind, CGEventType::KeyDown | CGEventType::OtherMouseDown);
+            let repeat = !mouse && event.get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT) != 0;
+
+            // Choosing a button in Settings: the next press is it.
+            if down && !repeat && recording() {
+                record(false);
+                if !(code == ESCAPE && !mouse) {
+                    let button = Button { mouse, code, mods: modifiers(flags) };
+                    set_button(Some(button));
+                    std::thread::spawn(move || {
+                        let settings = crate::store::load_settings();
+                        crate::store::save_settings(&crate::store::Settings { button: Some(button), ..settings });
+                    });
+                }
+                return None;
+            }
+            if let Some(button) = button()
+                && button.mouse == mouse
+                && button.code == code
+                && !matches!(kind, CGEventType::FlagsChanged)
+            {
+                if down && (repeat || modifiers(flags) == button.mods) {
+                    if !repeat {
+                        button_held.store(true, Ordering::Relaxed);
+                        on_key(Key::Down);
+                    }
+                    return None;
+                }
+                if !down && button_held.swap(false, Ordering::Relaxed) {
+                    on_key(Key::Up);
+                    return None;
+                }
+            }
+
             match kind {
                 CGEventType::FlagsChanged if code == FN_KEY => {
                     let down = flags.contains(CGEventFlags::CGEventFlagSecondaryFn);

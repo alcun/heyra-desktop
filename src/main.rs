@@ -12,6 +12,7 @@ mod record;
 mod setup;
 mod sound;
 mod store;
+mod ting;
 mod tray;
 mod ui;
 mod worker;
@@ -306,6 +307,7 @@ fn main() {
             }
             state.lock().unwrap().blocker = None;
             let tx = tx.clone();
+            hotkey::set_button(store::load_settings().button);
             if let Err(e) = hotkey::listen(move |key| {
                 let _ = tx.send(Cmd::Key(key));
             }) {

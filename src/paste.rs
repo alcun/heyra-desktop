@@ -9,6 +9,22 @@ use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 
 const CMD: CGKeyCode = 55;
 const V: CGKeyCode = 9;
+pub const RETURN: CGKeyCode = 36;
+pub const Z: CGKeyCode = 6;
+
+/// Press and release one key, with cmd held when `command` is set.
+pub fn tap(code: CGKeyCode, command: bool) -> Result<(), String> {
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| "event source".to_string())?;
+    let flags = if command { CGEventFlags::CGEventFlagCommand } else { CGEventFlags::CGEventFlagNull };
+    for down in [true, false] {
+        let event = CGEvent::new_keyboard_event(source.clone(), code, down)
+            .map_err(|_| "keyboard event".to_string())?;
+        event.set_flags(flags);
+        event.post(CGEventTapLocation::HID);
+    }
+    Ok(())
+}
 
 pub fn paste(text: &str) -> Result<(), String> {
     let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;

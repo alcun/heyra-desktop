@@ -133,6 +133,19 @@ pub struct Settings {
     /// Open at login was turned on once, on the first run; after that it's the user's switch.
     #[serde(default)]
     pub login_offered: bool,
+    /// A push-to-talk button of the user's choosing, alongside fn.
+    #[serde(default)]
+    pub button: Option<Button>,
+}
+
+/// A key (with the modifiers held with it) or an extra mouse button.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+pub struct Button {
+    pub mouse: bool,
+    /// Key code, or mouse button number (2 = middle, 3 and up = side buttons).
+    pub code: i64,
+    /// Command, control, option and shift, as CGEventFlags bits.
+    pub mods: u64,
 }
 
 pub fn save_clip(sample_rate: u32, samples: &[f32]) {
