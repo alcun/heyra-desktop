@@ -64,10 +64,11 @@ the dot, or use the menu bar, to open your history and settings.
 - **Dictionary.** Fix words it mishears: `a cappy bar => capybara`.
 - **Any microphone.** Plug one in and Heyra switches to it, with a note above the dot.
   Settings lists your mics with a live level. Optionally mutes the Mac while you talk.
-- **TING.** A Teenage Engineering EP-2350 is push-to-talk with nothing else installed:
-  choose its line-in as the mic and squeeze to talk. The bottom button presses Enter, the
-  middle one undoes. The TING needs the script from
-  [ting-wispr](https://github.com/alcun/ting-wispr) on its disk, once (`install-ting.sh`).
+- **FX mic (TING).** A Teenage Engineering EP-2350 is push-to-talk with nothing else
+  installed: choose its line-in as the mic and squeeze to talk. The bottom button presses
+  Enter, the middle one undoes. Once per mic, plug it in over USB-C and choose Settings →
+  Set up this FX mic: Heyra puts a small script and four tones on its disk (from
+  [ting-wispr](https://github.com/alcun/ting-wispr)), backing up its files first.
 
 Everything Heyra keeps is in `~/Library/Application Support/Heyra`.
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.4
+
+- Set up an FX mic (TING) from Heyra: plug it in over USB-C, then Settings → Set up this FX
+  mic. Its disk's files are backed up to Documents first. No script or other app needed.
+- Welcome ends with "You're ready": how to use Heyra, then a note above the dot it lives in.
+- "Didn't catch that" above the dot when a take has no words, instead of nothing.
+
 ## 0.3.3
 
 - The microphone opens as soon as it's allowed, while the voice model is still downloading,

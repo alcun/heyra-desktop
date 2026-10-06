@@ -43,6 +43,10 @@ pub struct State {
     /// The microphone may be opened. On the first run it waits for the welcome
     /// window, so macOS's question comes after Heyra has said why.
     pub mic_go: bool,
+    /// A TING's disk is mounted (plugged in over USB-C): whether it's set up for Heyra.
+    pub ting_disk: Option<bool>,
+    /// How the last TING setup went, for Settings.
+    pub ting_note: Option<String>,
     /// A short note shown above the dot: a quiet lead word, the news, and when.
     pub toast: Option<(String, String, Instant)>,
 }
@@ -77,6 +81,8 @@ pub fn new_state() -> Shared {
         ting_heard: false,
         mic_go: store::load_settings().onboarded || crate::setup::check().mic != crate::setup::Mic::Unknown,
         toast: None,
+        ting_disk: None,
+        ting_note: None,
     }))
 }
 
@@ -166,6 +172,9 @@ fn finish(state: &Shared, engine: &mut dyn Engine, recorder: &Recorder, paste: b
     };
     let took = started.elapsed().as_secs_f32();
     store::log(&format!("transcribed in {took:.2}s, {} chars", text.len()));
+    if text.is_empty() && !enter {
+        state.lock().unwrap().toast = Some(("Didn't catch that".into(), String::new(), Instant::now()));
+    }
     if !text.is_empty() {
         if paste {
             match crate::paste::paste(&text) {
@@ -300,7 +309,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
             let mut s = state.lock().unwrap();
             if !s.ting_heard {
                 s.ting_heard = true;
-                s.toast = Some(("Connected".into(), "TING".into(), Instant::now()));
+                s.toast = Some(("Connected".into(), "FX mic".into(), Instant::now()));
             }
         }
         // The level shows in Settings too, so a mic can be checked without talking to an app.

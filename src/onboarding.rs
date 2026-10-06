@@ -15,7 +15,8 @@ use gpui::prelude::*;
 use crate::gpu_orb::{Gpu, Motion};
 use crate::setup::{self, Mic};
 use crate::ui::{CREAM, GOLD, GROUND, MONO, SANS, SLATE, alpha};
-use crate::worker::{Phase, Shared};
+use crate::worker::{Cmd, Phase, Shared};
+use std::sync::mpsc::Sender;
 
 /// The orb's size in the window, in points.
 const ORB: f32 = 200.;
@@ -27,10 +28,12 @@ enum Step {
     Access,
     FnKey,
     Try,
+    Ready,
 }
 
 pub struct Onboarding {
     state: Shared,
+    cmds: Sender<Cmd>,
     step: Step,
     gpu: Option<Gpu>,
     motion: Motion,
@@ -40,7 +43,7 @@ pub struct Onboarding {
     takes_before: usize,
 }
 
-pub fn open(cx: &mut App, state: Shared) {
+pub fn open(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
     let bounds = Bounds::centered(None, size(px(460.), px(580.)), cx);
     cx.open_window(
         WindowOptions {
@@ -56,6 +59,7 @@ pub fn open(cx: &mut App, state: Shared) {
         |_, cx| {
             cx.new(|_| Onboarding {
                 state,
+                cmds,
                 step: Step::Welcome,
                 gpu: Gpu::new().ok(),
                 // It begins as the resting dot and grows into the orb.
@@ -78,14 +82,14 @@ impl Onboarding {
             Step::Microphone => checks.mic == Mic::Allowed,
             Step::Access => checks.accessibility,
             Step::FnKey => checks.fn_free,
-            Step::Welcome | Step::Try => false,
+            Step::Welcome | Step::Try | Step::Ready => false,
         }
     }
 
     fn advance(&mut self) {
-        const ORDER: [Step; 5] = [Step::Welcome, Step::Microphone, Step::Access, Step::FnKey, Step::Try];
+        const ORDER: [Step; 6] = [Step::Welcome, Step::Microphone, Step::Access, Step::FnKey, Step::Try, Step::Ready];
         let at = ORDER.iter().position(|&s| s == self.step).unwrap_or(0);
-        self.step = ORDER[at + 1..].iter().copied().find(|&s| !self.done(s)).unwrap_or(Step::Try);
+        self.step = ORDER[at + 1..].iter().copied().find(|&s| !self.done(s)).unwrap_or(Step::Ready);
         if self.step == Step::Try {
             self.takes_before = self.state.lock().unwrap().history.len();
         }
@@ -182,12 +186,7 @@ impl Render for Onboarding {
                 Some("Open Keyboard Settings"),
                 Some("Skip"),
             ),
-            Step::Try if tried => (
-                String::new(),
-                "That's Heyra. It lives in the dot at the bottom of your screen.".into(),
-                Some("Done"),
-                None,
-            ),
+            Step::Try if tried => (String::new(), "That's Heyra.".into(), Some("Continue"), None),
             Step::Try if loading => (
                 "Almost ready".into(),
                 format!(
@@ -197,7 +196,13 @@ impl Render for Onboarding {
                 None,
                 Some("Done"),
             ),
-            Step::Try => ("Try it".into(), "Hold fn and say something.\nLet go when you're done.".into(), None, Some("Done")),
+            Step::Try => ("Try it".into(), "Hold fn and say something.\nLet go when you're done.".into(), None, Some("Skip")),
+            Step::Ready => (
+                "You're ready".into(),
+                "Click into any text box, hold fn and talk.\nDouble-tap fn to talk hands-free.\nHeyra lives in the dot at the bottom of your screen.".into(),
+                Some("Start"),
+                Some("Open Heyra"),
+            ),
         };
 
         let step = self.step;
@@ -222,13 +227,20 @@ impl Render for Onboarding {
                     crate::hotkey::trusted(true);
                 }
                 Step::FnKey => setup::open_settings(setup::PANE_KEYBOARD),
-                Step::Try => window.remove_window(),
+                Step::Try => this.advance(),
+                // Off it goes, to the dot it lives in.
+                Step::Ready => {
+                    this.state.lock().unwrap().toast =
+                        Some(("Ready".into(), "Hold fn anywhere".into(), Instant::now()));
+                    window.remove_window();
+                }
             }
             cx.notify();
         });
         let skip = cx.listener(move |this, _, window, cx| {
-            if step == Step::Try {
+            if step == Step::Ready {
                 window.remove_window();
+                crate::ui::open_main(cx, this.state.clone(), this.cmds.clone());
             } else {
                 this.advance();
             }

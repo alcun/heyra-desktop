@@ -538,7 +538,7 @@ impl Main {
                 let tag = match m.kind {
                     crate::mics::Kind::BuiltIn => Some("BUILT-IN"),
                     crate::mics::Kind::Bluetooth => Some("BLUETOOTH"),
-                    _ if ting_heard && m.name == in_use => Some("TING"),
+                    _ if ting_heard && m.name == in_use => Some("FX MIC"),
                     _ => None,
                 };
                 (m.name.clone(), tag, Some(m.name))
@@ -578,7 +578,7 @@ impl Main {
                             .when(selected, |d| d.bg(rgb(GOLD))),
                     )
                     .child(div().flex_1().text_sm().text_color(rgb(if selected { CREAM } else { SLATE })).child(name))
-                    .children(tag.map(|t| div().font_family(MONO).text_xs().text_color(rgb(if t == "TING" { GOLD } else { DIM })).child(t)))
+                    .children(tag.map(|t| div().font_family(MONO).text_xs().text_color(rgb(if t == "FX MIC" { GOLD } else { DIM })).child(t)))
                     .when(selected, |d| d.child(meter(10, ((level * 1.15).min(1.0) * 10.) as usize, true, true)))
                     .into_any_element(),
             );
@@ -643,12 +643,44 @@ impl Main {
                     })
                     .child(hint("Any key, key combo or extra mouse button: a foot pedal, a macro pad, a mic's button that types a key."))
                     .child(hint(if ting_heard {
-                        "TING heard on this microphone: squeeze to talk, bottom button for Enter, middle to undo."
+                        "FX mic heard on this microphone: squeeze to talk, bottom button for Enter, middle to undo."
                     } else {
-                        "A Teenage Engineering TING works too: choose its line-in as the microphone, then squeeze."
+                        "A Teenage Engineering FX mic (TING) works too: choose its line-in as the microphone, then squeeze."
                     }))
                     .child(hint("If fn opens the emoji picker: System Settings → Keyboard → Press 🌐 key to → Do nothing.")),
             )
+            .child({
+                let (disk, note) = {
+                    let s = self.state.lock().unwrap();
+                    (s.ting_disk, s.ting_note.clone())
+                };
+                let line = match disk {
+                    None if note.is_some() => None,
+                    None => Some("Plug your FX mic in over USB-C to set it up for Heyra. Once per mic."),
+                    Some(false) => Some("FX mic plugged in. Setting it up adds a small script and four tones to its disk; its own files are backed up first."),
+                    Some(true) => Some("This FX mic is set up. Unplug it, press the button above its USB port, then squeeze."),
+                };
+                let state = self.state.clone();
+                section("FX MIC · TING")
+                    .children(line.map(|l| div().text_sm().text_color(rgb(CREAM)).child(l)))
+                    .when(disk == Some(false), |d| {
+                        d.child(div().flex().pt_1().child(button("ting-setup", "SET UP THIS FX MIC").on_click(move |_, _, _| {
+                            let state = state.clone();
+                            std::thread::spawn(move || {
+                                let note = match crate::ting_setup::disk().map(|d| crate::ting_setup::set_up(&d)) {
+                                    Some(Ok(backup)) => format!(
+                                        "Done. Unplug it, press the button above its USB port, then squeeze. Its old files: {}",
+                                        backup.display()
+                                    ),
+                                    Some(Err(e)) => format!("Couldn't set it up: {e}"),
+                                    None => "The FX mic was unplugged.".into(),
+                                };
+                                state.lock().unwrap().ting_note = Some(note);
+                            });
+                        })))
+                    })
+                    .children(note.map(|n| div().text_sm().text_color(rgb(CREAM)).child(n)))
+            })
             .child(
                 section("SOUND")
                     .child(switch("sounds", "Soft click when a take starts and ends", crate::sound::enabled(), |on| {
@@ -911,7 +943,9 @@ impl Render for Toast {
             .text_size(px(12.5))
             .child(dot)
             .child(div().text_color(rgb(SLATE)).child(self.lead.clone()))
-            .child(div().font_weight(gpui::FontWeight::MEDIUM).text_color(rgb(CREAM)).child(self.text.clone()));
+            .when(!self.text.is_empty(), |d| {
+                d.child(div().font_weight(gpui::FontWeight::MEDIUM).text_color(rgb(CREAM)).child(self.text.clone()))
+            });
         div()
             .size_full()
             .flex()

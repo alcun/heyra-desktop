@@ -15,6 +15,7 @@ mod setup;
 mod sound;
 mod store;
 mod ting;
+mod ting_setup;
 mod tray;
 mod ui;
 mod worker;
@@ -318,11 +319,24 @@ fn main() {
         std::thread::spawn(move || worker::run(state, rx));
     }
     {
-        // Keep the setup list on Home current as permissions change.
+        // Keep the setup list on Home current as permissions change, and notice a
+        // TING plugged in over USB-C.
         let state = state.clone();
         std::thread::spawn(move || loop {
             let checks = setup::check();
-            state.lock().unwrap().checks = checks;
+            let disk = ting_setup::disk().map(|d| ting_setup::is_set_up(&d));
+            {
+                let mut s = state.lock().unwrap();
+                s.checks = checks;
+                if disk.is_some() && s.ting_disk.is_none() {
+                    s.ting_note = None;
+                    s.toast = Some(match disk {
+                        Some(false) => ("FX mic plugged in".into(), "Set it up in Settings".into(), Instant::now()),
+                        _ => ("FX mic".into(), "Ready: unplug it and squeeze".into(), Instant::now()),
+                    });
+                }
+                s.ting_disk = disk;
+            }
             std::thread::sleep(Duration::from_secs(1));
         });
     }
@@ -354,7 +368,7 @@ fn main() {
             Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexMono-Medium.ttf").as_slice()),
         ]);
         if welcome {
-            onboarding::open(cx, state.clone());
+            onboarding::open(cx, state.clone(), tx.clone());
             store::save_settings(&store::Settings { onboarded: true, ..store::load_settings() });
         } else {
             ui::open_main(cx, state.clone(), tx.clone());
