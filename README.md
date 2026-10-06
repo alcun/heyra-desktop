@@ -33,6 +33,10 @@ the dot, or use the menu bar, to open your history and settings.
 - **Push to talk.** Hold fn. A glowing orb at the bottom of the screen shows it's
   listening. Let go and the text is pasted in, and your clipboard text is put back.
   Pressing another key while holding fn (fn+arrow, fn+delete) cancels the take.
+  A soft click marks the start and end of each take.
+- **Hands-free.** Double-tap fn to start, tap fn once to stop. Good for long dictation.
+- **Long takes.** Talk for up to 30 minutes in one go; long takes are written a minute
+  at a time, about 5 s of writing per minute of speech.
 - **Fast.** Six seconds of speech becomes text in about 0.4 s on an M-series Mac.
 - **Light.** About 2% of one CPU core at rest and 5% while you talk. The model stays
   loaded (about 1.3 GB of memory) so it's ready the moment you press fn.

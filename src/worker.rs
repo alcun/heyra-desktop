@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use crate::engine::{Engine, Parakeet};
 use crate::hotkey::Key;
 use crate::record::Recorder;
+use crate::sound::Cue;
 use crate::store::{self, Entry};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -80,8 +81,47 @@ fn open_mic(state: &Shared, name: Option<&str>) -> Option<Recorder> {
     }
 }
 
-/// Longest single take; a held key past this is treated as a release.
-const MAX_TAKE_SECS: f32 = 300.0;
+/// Longest single take; a stuck key or a forgotten hands-free take ends here.
+const MAX_TAKE_SECS: f32 = 30.0 * 60.0;
+/// A press shorter than this is a tap, not push-to-talk.
+const TAP: Duration = Duration::from_millis(300);
+/// Two taps this close together start hands-free.
+const DOUBLE_TAP: Duration = Duration::from_millis(500);
+
+/// Stop recording, then transcribe and paste the take.
+fn finish(state: &Shared, engine: &mut dyn Engine, recorder: &Recorder) {
+    let samples = recorder.end();
+    let secs = samples.len() as f32 / recorder.sample_rate as f32;
+    let peak = samples.iter().fold(0f32, |m, x| m.max(x.abs()));
+    store::log(&format!("clip {secs:.1}s peak {peak:.3}"));
+    if store::load_settings().keep_last_clip {
+        store::save_clip(recorder.sample_rate, &samples);
+    }
+    if secs < 0.4 {
+        return;
+    }
+    crate::sound::play(Cue::Stop);
+    {
+        let mut s = state.lock().unwrap();
+        s.phase = Phase::Transcribing;
+        s.message = "Writing".into();
+        s.level = 0.0;
+    }
+    let started = Instant::now();
+    let raw = crate::engine::transcribe_long(engine, recorder.sample_rate, &samples);
+    let text = store::apply_dictionary(&raw, &store::load_dictionary());
+    let took = started.elapsed().as_secs_f32();
+    store::log(&format!("transcribed in {took:.2}s, {} chars", text.len()));
+    if !text.is_empty() {
+        match crate::paste::paste(&text) {
+            Ok(()) => store::log("pasted"),
+            Err(e) => store::log(&format!("paste failed: {e}")),
+        }
+        let entry = Entry { at: store::now(), text, secs, took };
+        store::append_history(&entry);
+        state.lock().unwrap().history.push(entry);
+    }
+}
 
 pub fn run(state: Shared, cmds: Receiver<Cmd>) {
     {
@@ -124,67 +164,73 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
     };
     ready(&state);
 
-    let mut down = false;
+    let mut recording = false;
+    let mut hands_free = false;
+    // The key-up that follows the tap ending a hands-free take.
+    let mut ignore_up = false;
+    let mut pressed_at = Instant::now();
+    let mut last_tap: Option<Instant> = None;
     loop {
         let cmd = match cmds.recv_timeout(Duration::from_millis(30)) {
             Ok(cmd) => Some(cmd),
             Err(RecvTimeoutError::Timeout) => None,
             Err(RecvTimeoutError::Disconnected) => return,
         };
-        if down {
+        if recording {
             state.lock().unwrap().level = recorder.level();
+            if recorder.seconds() > MAX_TAKE_SECS {
+                recording = false;
+                ignore_up = !hands_free;
+                hands_free = false;
+                finish(&state, engine.as_mut(), &recorder);
+                ready(&state);
+                continue;
+            }
         }
-        // A stuck key must not record forever.
-        let cmd = if down && recorder.seconds() > MAX_TAKE_SECS { Some(Cmd::Key(Key::Up)) } else { cmd };
         match cmd {
-            Some(Cmd::Key(Key::Cancel)) if down => {
-                down = false;
+            Some(Cmd::Key(Key::Cancel)) if recording && !hands_free => {
+                recording = false;
                 recorder.end();
                 ready(&state);
             }
-            Some(Cmd::Key(Key::Down)) if !down => {
-                down = true;
+            Some(Cmd::Key(Key::Down)) if hands_free => {
+                recording = false;
+                hands_free = false;
+                ignore_up = true;
+                finish(&state, engine.as_mut(), &recorder);
+                ready(&state);
+            }
+            Some(Cmd::Key(Key::Down)) if !recording => {
+                recording = true;
+                pressed_at = Instant::now();
                 recorder.begin();
+                // The second tap of a double-tap already heard the first's sound.
+                if !last_tap.is_some_and(|t| t.elapsed() < DOUBLE_TAP) {
+                    crate::sound::play(Cue::Start);
+                }
                 let mut s = state.lock().unwrap();
                 s.phase = Phase::Listening;
                 s.message = "Recording".into();
             }
-            Some(Cmd::Key(Key::Up)) if down => {
-                down = false;
-                let samples = recorder.end();
-                let secs = samples.len() as f32 / recorder.sample_rate as f32;
-                let peak = samples.iter().fold(0f32, |m, x| m.max(x.abs()));
-                store::log(&format!("clip {secs:.1}s peak {peak:.3}"));
-                if store::load_settings().keep_last_clip {
-                    store::save_clip(recorder.sample_rate, &samples);
-                }
-                if secs < 0.4 {
-                    ready(&state);
+            Some(Cmd::Key(Key::Up)) if ignore_up => ignore_up = false,
+            Some(Cmd::Key(Key::Up)) if recording && !hands_free => {
+                if pressed_at.elapsed() < TAP {
+                    if last_tap.take().is_some_and(|t| t.elapsed() < DOUBLE_TAP) {
+                        hands_free = true;
+                        state.lock().unwrap().message = "Hands-free: tap fn to stop".into();
+                    } else {
+                        last_tap = Some(Instant::now());
+                        recording = false;
+                        recorder.end();
+                        ready(&state);
+                    }
                     continue;
                 }
-                {
-                    let mut s = state.lock().unwrap();
-                    s.phase = Phase::Transcribing;
-                    s.message = "Writing".into();
-                    s.level = 0.0;
-                }
-                let started = Instant::now();
-                let raw = engine.transcribe(recorder.sample_rate, &samples);
-                let text = store::apply_dictionary(&raw, &store::load_dictionary());
-                let took = started.elapsed().as_secs_f32();
-                store::log(&format!("transcribed in {took:.2}s, {} chars", text.len()));
-                if !text.is_empty() {
-                    match crate::paste::paste(&text) {
-                        Ok(()) => store::log("pasted"),
-                        Err(e) => store::log(&format!("paste failed: {e}")),
-                    }
-                    let entry = Entry { at: store::now(), text, secs, took };
-                    store::append_history(&entry);
-                    state.lock().unwrap().history.push(entry);
-                }
+                recording = false;
+                finish(&state, engine.as_mut(), &recorder);
                 ready(&state);
             }
-            Some(Cmd::SetMic(name)) if !down => {
+            Some(Cmd::SetMic(name)) if !recording => {
                 drop(recorder);
                 store::save_settings(&store::Settings { mic: name.clone(), ..store::load_settings() });
                 state.lock().unwrap().mic = name.clone();

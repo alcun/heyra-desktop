@@ -9,6 +9,7 @@ mod gpu_orb;
 mod paste;
 mod record;
 mod setup;
+mod sound;
 mod store;
 mod tray;
 mod ui;
@@ -20,7 +21,7 @@ use std::time::Duration;
 
 use gpui::{App, Application};
 
-use engine::{Engine, Parakeet};
+use engine::Parakeet;
 use worker::{Cmd, Phase};
 
 /// `heyra --file clip.wav` prints a transcript: a quick check of the engine.
@@ -44,7 +45,7 @@ fn transcribe_file(path: &str) {
     let mut engine = Parakeet::load(&dir).expect("load model");
     let loaded = started.elapsed().as_secs_f32();
     let started = std::time::Instant::now();
-    let text = engine.transcribe(spec.sample_rate, &mono);
+    let text = engine::transcribe_long(&mut engine, spec.sample_rate, &mono);
     println!("{text}");
     eprintln!(
         "load {loaded:.2}s, {:.1}s audio in {:.2}s",
