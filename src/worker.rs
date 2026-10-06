@@ -96,6 +96,8 @@ fn open_mic(state: &Shared, name: Option<&str>) -> Option<Recorder> {
 
 /// Longest single take; a stuck key or a forgotten hands-free take ends here.
 const MAX_TAKE_SECS: f32 = 30.0 * 60.0;
+/// How often to look for microphones plugged in or taken out.
+const MIC_SCAN: Duration = Duration::from_secs(2);
 /// A press shorter than this is a tap, not push-to-talk.
 const TAP: Duration = Duration::from_millis(300);
 /// Two taps this close together start hands-free.
@@ -187,11 +189,32 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
     let mut pressed_at = Instant::now();
     let mut last_tap: Option<Instant> = None;
     let mut queue: Vec<Cmd> = Vec::new();
+    // Microphones come and go: a new one is switched to, as other dictation apps do.
+    let mut known = state.lock().unwrap().devices.clone();
+    let mut scanned = Instant::now();
     loop {
         match cmds.recv_timeout(Duration::from_millis(30)) {
             Ok(cmd) => queue.push(cmd),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
+        }
+        if !recording && scanned.elapsed() > MIC_SCAN {
+            scanned = Instant::now();
+            let devices = Recorder::devices();
+            if devices != known {
+                let added: Vec<&String> = devices.iter().filter(|d| !known.contains(d)).collect();
+                // An adapter with both: the line-in is where a TING is.
+                let pick = added.iter().find(|d| d.to_lowercase().contains("line in")).or(added.first());
+                if let Some(name) = pick {
+                    store::log(&format!("new microphone: {name}"));
+                    queue.push(Cmd::SetMic(Some(name.to_string())));
+                } else if !devices.contains(&recorder.device_name) {
+                    store::log(&format!("microphone gone: {}", recorder.device_name));
+                    queue.push(Cmd::SetMic(None));
+                }
+                known = devices.clone();
+                state.lock().unwrap().devices = devices;
+            }
         }
         // A TING's squeeze is push-to-talk, like fn; its buttons press Enter and undo.
         for event in recorder.ting_events() {
