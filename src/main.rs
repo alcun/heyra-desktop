@@ -5,6 +5,7 @@
 mod engine;
 mod hotkey;
 mod login;
+mod mics;
 mod model;
 mod gpu_orb;
 mod paste;
@@ -19,7 +20,7 @@ mod worker;
 
 use std::borrow::Cow;
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{App, Application};
 
@@ -107,6 +108,9 @@ struct OrbDriver {
     rested: bool,
 }
 
+/// How long a toast stays above the dot.
+const TOAST_FOR: Duration = Duration::from_secs(3);
+
 /// Size of the resting dot, as a fraction of the full orb.
 const IDLE_SCALE: f32 = 0.12;
 /// Size of the dot under the pointer.
@@ -182,6 +186,13 @@ impl OrbDriver {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.len() == 2 && args[1] == "--mics" {
+        for mic in mics::list() {
+            println!("{:?}\t{}", mic.kind, mic.name);
+        }
+        println!("default: {:?}", mics::default_name());
+        return;
+    }
     if args.len() == 3 && args[1] == "--file" {
         return transcribe_file(&args[2]);
     }
@@ -371,13 +382,14 @@ fn main() {
         let buttons: [(&'static str, f64, fn() -> Cmd); 2] = [("✕", -1.0, || Cmd::Discard), ("✓", 1.0, || Cmd::Finish)];
         let pressed = [std::rc::Rc::new(std::cell::Cell::new(false)), std::rc::Rc::new(std::cell::Cell::new(false))];
         let mut button_windows: Vec<gpui::WindowHandle<ui::OrbButton>> = Vec::new();
+        let mut toast: Option<(gpui::WindowHandle<ui::Toast>, Instant)> = None;
         cx.spawn(async move |cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(16)).await;
                 frame = frame.wrapping_add(1);
-                let (phase, level, hands_free) = {
+                let (phase, level, hands_free, note) = {
                     let s = state.lock().unwrap();
-                    (s.phase, s.level, s.hands_free)
+                    (s.phase, s.level, s.hands_free, s.toast.clone())
                 };
                 let ok = cx.update(|cx| {
                     // At rest, the pointer over the dot wakes it a little; a click opens Heyra.
@@ -411,6 +423,17 @@ fn main() {
                             }
                         }
                         _ => {}
+                    }
+                    // A toast lasts three seconds; a newer one replaces it.
+                    let fresh = note.as_ref().filter(|(_, at)| at.elapsed() < TOAST_FOR);
+                    let shown = toast.as_ref().map(|(_, at)| *at);
+                    if fresh.map(|(_, at)| *at) != shown {
+                        if let Some((h, _)) = toast.take() {
+                            let _ = h.update(cx, |_, window, _| window.remove_window());
+                        }
+                        if let (Some((text, at)), Some(centre)) = (fresh, orb.centre()) {
+                            toast = ui::open_toast(cx, centre, text.clone()).map(|h| (h, *at));
+                        }
                     }
                     for ((_, _, cmd), clicked) in buttons.iter().zip(&pressed) {
                         if clicked.replace(false) {

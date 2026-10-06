@@ -26,7 +26,7 @@ pub struct State {
     pub message: String,
     pub level: f32,
     pub history: Vec<Entry>,
-    pub devices: Vec<String>,
+    pub devices: Vec<crate::mics::Mic>,
     pub mic: Option<String>,
     pub mic_in_use: String,
     pub sample_rate: u32,
@@ -39,6 +39,8 @@ pub struct State {
     pub hands_free: bool,
     /// A TING has been heard on the microphone in use.
     pub ting_heard: bool,
+    /// A short note shown above the dot, and when it was posted.
+    pub toast: Option<(String, Instant)>,
 }
 
 pub type Shared = Arc<Mutex<State>>;
@@ -60,7 +62,7 @@ pub fn new_state() -> Shared {
         message: "Starting…".into(),
         level: 0.0,
         history: store::load_history(),
-        devices: Recorder::devices(),
+        devices: crate::mics::list(),
         mic: store::load_settings().mic,
         mic_in_use: String::new(),
         sample_rate: 0,
@@ -69,6 +71,7 @@ pub fn new_state() -> Shared {
         blocker: None,
         hands_free: false,
         ting_heard: false,
+        toast: None,
     }))
 }
 
@@ -190,8 +193,10 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
     let mut last_tap: Option<Instant> = None;
     let mut queue: Vec<Cmd> = Vec::new();
     // Microphones come and go: a new one is switched to, as other dictation apps do.
-    let mut known = state.lock().unwrap().devices.clone();
+    let mut known: Vec<String> = state.lock().unwrap().devices.iter().map(|m| m.name.clone()).collect();
     let mut scanned = Instant::now();
+    // Said above the dot once the switch it describes has happened: "Using " + the mic.
+    let mut announce: Option<String> = None;
     loop {
         match cmds.recv_timeout(Duration::from_millis(30)) {
             Ok(cmd) => queue.push(cmd),
@@ -200,20 +205,27 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
         }
         if !recording && scanned.elapsed() > MIC_SCAN {
             scanned = Instant::now();
-            let devices = Recorder::devices();
-            if devices != known {
-                let added: Vec<&String> = devices.iter().filter(|d| !known.contains(d)).collect();
-                // An adapter with both: the line-in is where a TING is.
-                let pick = added.iter().find(|d| d.to_lowercase().contains("line in")).or(added.first());
-                if let Some(name) = pick {
-                    store::log(&format!("new microphone: {name}"));
-                    queue.push(Cmd::SetMic(Some(name.to_string())));
-                } else if !devices.contains(&recorder.device_name) {
+            let mics = crate::mics::list();
+            let names: Vec<String> = mics.iter().map(|m| m.name.clone()).collect();
+            if names != known {
+                // Only a mic plugged in by cable takes over; a phone or headphones coming
+                // into range don't. An adapter with both: the line-in is where a TING is.
+                let added: Vec<&crate::mics::Mic> = mics
+                    .iter()
+                    .filter(|m| !known.contains(&m.name) && m.kind == crate::mics::Kind::Wired)
+                    .collect();
+                let pick = added.iter().find(|m| m.name.to_lowercase().contains("line in")).or(added.first());
+                if let Some(mic) = pick {
+                    store::log(&format!("new microphone: {}", mic.name));
+                    announce = Some("Using ".into());
+                    queue.push(Cmd::SetMic(Some(mic.name.clone())));
+                } else if !names.contains(&recorder.device_name) {
                     store::log(&format!("microphone gone: {}", recorder.device_name));
+                    announce = Some(format!("{} unplugged · using ", recorder.device_name));
                     queue.push(Cmd::SetMic(None));
                 }
-                known = devices.clone();
-                state.lock().unwrap().devices = devices;
+                known = names;
+                state.lock().unwrap().devices = mics;
             }
         }
         // A TING's squeeze is push-to-talk, like fn; its buttons press Enter and undo.
@@ -225,10 +237,15 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                 TingEvent::Bottom => Cmd::Press(crate::paste::RETURN, false),
                 TingEvent::Middle => Cmd::Press(crate::paste::Z, true),
             });
-            state.lock().unwrap().ting_heard = true;
+            let mut s = state.lock().unwrap();
+            if !s.ting_heard {
+                s.ting_heard = true;
+                s.toast = Some(("TING connected".into(), Instant::now()));
+            }
         }
+        // The level shows in Settings too, so a mic can be checked without talking to an app.
+        state.lock().unwrap().level = recorder.level();
         if recording {
-            state.lock().unwrap().level = recorder.level();
             if recorder.seconds() > MAX_TAKE_SECS {
                 recording = false;
                 ignore_up = !hands_free;
@@ -308,6 +325,9 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                         None => return,
                     },
                 };
+                if let Some(text) = announce.take() {
+                    state.lock().unwrap().toast = Some((text + &recorder.device_name, Instant::now()));
+                }
                 ready(&state);
             }
             _ => {}

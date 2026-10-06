@@ -148,6 +148,7 @@ pub struct Main {
     page: Page,
     copied: Option<usize>,
     born: Instant,
+    show_other_mics: bool,
 }
 
 pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
@@ -164,7 +165,7 @@ pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
             ..Default::default()
         },
         |_, cx| {
-            cx.new(|_| Main { state, cmds, page: Page::Home, copied: None, born: Instant::now() })
+            cx.new(|_| Main { state, cmds, page: Page::Home, copied: None, born: Instant::now(), show_other_mics: false })
         },
     )
     .ok();
@@ -501,14 +502,32 @@ impl Main {
     }
 
     fn settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (devices, chosen, in_use, ting_heard) = {
+        let (devices, chosen, in_use, ting_heard, level) = {
             let s = self.state.lock().unwrap();
-            (s.devices.clone(), s.mic.clone(), s.mic_in_use.clone(), s.ting_heard)
+            (s.devices.clone(), s.mic.clone(), s.mic_in_use.clone(), s.ting_heard, s.level)
         };
+        let mac_default = crate::mics::default_name().unwrap_or_else(|| "none".into());
+        // Real mics first; the Mac's own choice; then phones and virtual devices, folded away.
+        let (real, other): (Vec<_>, Vec<_>) = devices.into_iter().partition(|m| m.kind != crate::mics::Kind::Other);
+        let mut options: Vec<(String, Option<&'static str>, Option<String>)> = real
+            .into_iter()
+            .map(|m| {
+                let tag = match m.kind {
+                    crate::mics::Kind::BuiltIn => Some("BUILT-IN"),
+                    crate::mics::Kind::Bluetooth => Some("BLUETOOTH"),
+                    _ if ting_heard && m.name == in_use => Some("TING"),
+                    _ => None,
+                };
+                (m.name.clone(), tag, Some(m.name))
+            })
+            .collect();
+        options.push((format!("Same as Mac's Sound settings ({mac_default})"), None, None));
+        let other_count = other.len();
+        if self.show_other_mics {
+            options.extend(other.into_iter().map(|m| (m.name.clone(), None, Some(m.name))));
+        }
         let mut rows: Vec<AnyElement> = Vec::new();
-        let options = std::iter::once((String::from("System default"), None))
-            .chain(devices.into_iter().map(|d| (d.clone(), Some(d))));
-        for (i, (name, value)) in options.enumerate() {
+        for (i, (name, tag, value)) in options.into_iter().enumerate() {
             let selected = chosen == value;
             let cmds = self.cmds.clone();
             rows.push(
@@ -528,13 +547,35 @@ impl Main {
                     }))
                     .child(
                         div()
+                            .flex_none()
                             .size(px(9.))
                             .rounded_full()
                             .border_1()
                             .border_color(rgb(if selected { GOLD } else { DIM }))
                             .when(selected, |d| d.bg(rgb(GOLD))),
                     )
-                    .child(div().text_sm().text_color(rgb(CREAM)).child(name))
+                    .child(div().flex_1().text_sm().text_color(rgb(if selected { CREAM } else { SLATE })).child(name))
+                    .children(tag.map(|t| div().font_family(MONO).text_xs().text_color(rgb(if t == "TING" { GOLD } else { DIM })).child(t)))
+                    .when(selected, |d| d.child(meter(10, ((level * 1.15).min(1.0) * 10.) as usize, true, true)))
+                    .into_any_element(),
+            );
+        }
+        if other_count > 0 {
+            let show = self.show_other_mics;
+            rows.push(
+                div()
+                    .id("other-mics")
+                    .pt_2()
+                    .font_family(MONO)
+                    .text_xs()
+                    .text_color(rgb(SLATE))
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(rgb(CREAM)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.show_other_mics = !show;
+                        cx.notify();
+                    }))
+                    .child(if show { "HIDE OTHER DEVICES".to_string() } else { format!("OTHER DEVICES ({other_count})") })
                     .into_any_element(),
             );
         }
@@ -546,8 +587,8 @@ impl Main {
             .child(title("Settings"))
             .child(
                 section("MICROPHONE")
-                    .child(hint(format!("In use: {in_use}")))
-                    .child(div().flex().flex_col().children(rows)),
+                    .child(div().flex().flex_col().children(rows))
+                    .child(hint("Plug in a mic and Heyra switches to it.")),
             )
             .child(
                 section("PUSH TO TALK")
@@ -776,6 +817,55 @@ impl Render for OrbButton {
             .hover(|d| d.text_color(rgb(GOLD)))
             .child(self.glyph)
             .on_click(move |_, _, _| clicked.set(true))
+    }
+}
+
+/// A short note above the dot: "Using CUBILUX HLMS-C4 Line IN".
+pub struct Toast {
+    pub text: String,
+}
+
+const TOAST_HEIGHT: f32 = 28.;
+
+pub fn open_toast(cx: &mut App, centre: (f64, f64), text: String) -> Option<gpui::WindowHandle<Toast>> {
+    // Monospace, so the width follows the length; clear of the orb and its buttons.
+    let width = text.chars().count() as f32 * 7.3 + 40.;
+    let origin = point(px(centre.0 as f32 - width / 2.), px(centre.1 as f32 - 76. - TOAST_HEIGHT / 2.));
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds { origin, size: size(px(width), px(TOAST_HEIGHT)) })),
+            titlebar: None,
+            focus: false,
+            show: true,
+            kind: gpui::WindowKind::PopUp,
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            window_background: gpui::WindowBackgroundAppearance::Transparent,
+            ..Default::default()
+        },
+        |_, cx| cx.new(|_| Toast { text }),
+    )
+    .ok()
+    .inspect(|handle| {
+        let _ = handle.update(cx, |_, window, _| no_shadow(window));
+    })
+}
+
+impl Render for Toast {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .rounded_full()
+            .bg(alpha(GROUND, 0.94))
+            .border_1()
+            .border_color(rgb(HAIR))
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap_2()
+            .child(div().flex_none().size(px(5.)).rounded_full().bg(rgb(GOLD)))
+            .child(div().font_family(MONO).text_size(px(11.5)).text_color(rgb(CREAM)).child(self.text.clone()))
     }
 }
 

@@ -28,14 +28,6 @@ struct Shared {
 }
 
 impl Recorder {
-    /// Names of the microphones this machine has.
-    pub fn devices() -> Vec<String> {
-        let host = cpal::default_host();
-        host.input_devices()
-            .map(|devices| devices.filter_map(|d| d.description().ok().map(|n| n.to_string())).collect())
-            .unwrap_or_default()
-    }
-
     /// Open the named microphone, or the system default.
     pub fn open(name: Option<&str>) -> Result<Self, String> {
         let host = cpal::default_host();
