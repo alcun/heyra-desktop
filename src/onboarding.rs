@@ -208,8 +208,15 @@ impl Render for Onboarding {
                 Step::Microphone => match mic_now {
                     Mic::Allowed => this.advance(),
                     Mic::Denied => setup::open_settings(setup::PANE_MICROPHONE),
-                    // The worker opens the mic now, and macOS asks.
-                    Mic::Unknown => this.state.lock().unwrap().mic_go = true,
+                    // macOS asks now; the answer moves this step on.
+                    Mic::Unknown => {
+                        let state = this.state.clone();
+                        setup::request_mic(move |granted| {
+                            let mut s = state.lock().unwrap();
+                            s.checks.mic = if granted { Mic::Allowed } else { Mic::Denied };
+                            s.mic_go = true;
+                        });
+                    }
                 },
                 Step::Access => {
                     crate::hotkey::trusted(true);

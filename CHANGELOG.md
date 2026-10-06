@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.2
+
+- Welcome: "Allow microphone" asks macOS straight away and moves on with the answer
+  (it waited for the voice model before, and didn't notice the answer).
+
 ## 0.3.1
 
 - A welcome window on first run: the orb grows from the dot, then one step at a time

@@ -60,6 +60,16 @@ fn fn_usage() -> Option<i64> {
     }
 }
 
+/// Ask macOS for the microphone now; `done` gets the answer (at once if it was
+/// already given). Asking through AVFoundation is also what keeps its status,
+/// read by `check`, current within this run.
+pub fn request_mic(done: impl Fn(bool) + 'static) {
+    let block = block::ConcreteBlock::new(move |granted: bool| done(granted)).copy();
+    unsafe {
+        let _: () = msg_send![class!(AVCaptureDevice), requestAccessForMediaType: AVMediaTypeAudio completionHandler: &*block];
+    }
+}
+
 pub fn check() -> Checks {
     Checks {
         mic: mic(),

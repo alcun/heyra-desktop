@@ -1,6 +1,6 @@
 [package]
 name = "heyra"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 description = "Hold fn, talk, let go: local push-to-talk dictation for macOS"
 license = "MIT"
@@ -8,6 +8,7 @@ repository = "https://github.com/alcun/heyra-desktop"
 
 [dependencies]
 arboard = "3.6.1"
+block = "0.1.6"
 bzip2 = "0.6.1"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 cocoa = "0.26"
