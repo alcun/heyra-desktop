@@ -27,6 +27,8 @@ PLIST
 # Sign with a stable identity so macOS keeps Microphone/Accessibility grants across
 # rebuilds. Ad-hoc ("-") signing changes every build and macOS asks again each time.
 IDENTITY="${HEYRA_SIGN:-$(security find-identity -v -p codesigning | awk -F'"' '/Apple Development|Developer ID/ {print $2; exit}')}"
-codesign --force --sign "${IDENTITY:--}" "$APP"
+# The hardened runtime and a secure timestamp are what notarization asks for.
+TIMESTAMP=$([[ "$IDENTITY" == Developer\ ID* ]] && echo --timestamp || echo --timestamp=none)
+codesign --force --options runtime --entitlements heyra.entitlements $TIMESTAMP --sign "${IDENTITY:--}" "$APP"
 echo "Signed with: ${IDENTITY:-ad-hoc (permissions reset on every build)}"
 echo "Built $APP"
