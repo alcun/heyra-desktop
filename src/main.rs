@@ -212,9 +212,11 @@ fn main() {
         image::RgbaImage::from_raw(size as u32, size as u32, px).unwrap().save(&args[2]).unwrap();
         return;
     }
-    if args.len() == 4 && args[1] == "--orb-frames" {
-        // `heyra --orb-frames <dir> <count>`: one seamless loop of the orb on the page's
-        // graphite, for the README. The shader repeats every 2π/0.35 s of its clock.
+    if (args.len() == 4 || args.len() == 5) && args[1] == "--orb-frames" {
+        // `heyra --orb-frames <dir> <count> [clear]`: one seamless loop of the orb for the
+        // README, on the page's graphite or, with `clear`, on transparency. The shader
+        // repeats every 2π/0.35 s of its clock.
+        let clear = args.get(4).is_some_and(|a| a == "clear");
         let gpu = gpu_orb::Gpu::new().expect("metal");
         let dir = std::path::Path::new(&args[2]);
         std::fs::create_dir_all(dir).unwrap();
@@ -235,6 +237,20 @@ fn main() {
                 scale: 1.0,
             };
             let px = gpu.snapshot(size, &u);
+            if clear {
+                // Premultiplied BGRA to straight RGBA.
+                let mut rgba = Vec::with_capacity(px.len());
+                for p in px.chunks(4) {
+                    let a = p[3] as f32 / 255.0;
+                    let un = |c: u8| if a > 0.0 { (c as f32 / a).min(255.0) as u8 } else { 0 };
+                    rgba.extend_from_slice(&[un(p[2]), un(p[1]), un(p[0]), p[3]]);
+                }
+                image::RgbaImage::from_raw(size as u32, size as u32, rgba)
+                    .unwrap()
+                    .save(dir.join(format!("{i:03}.png")))
+                    .unwrap();
+                continue;
+            }
             // Premultiplied BGRA over the page colour, to RGB.
             let mut rgb = Vec::with_capacity((size * size * 3) as usize);
             for p in px.chunks(4) {

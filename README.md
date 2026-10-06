@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/orb.gif" width="220" alt="The Heyra orb: light swirling inside a dark sphere"></p>
+<p align="center"><img src="docs/orb.webp" width="220" alt="The Heyra orb: light swirling inside a dark sphere"></p>
 
 # Heyra
 
