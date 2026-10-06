@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+- A welcome window on first run: the orb grows from the dot, then one step at a time
+  (microphone, Accessibility, the fn key), each with a line on why, and a first try.
+  Steps already done are skipped, and permission prompts wait until their step.
+
 ## 0.3.0
 
 - TING built in: with its line-in as the microphone, the squeeze is push-to-talk (a double
