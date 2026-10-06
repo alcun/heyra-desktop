@@ -352,6 +352,7 @@ fn main() {
     // First run from the app bundle: open at login, which Settings can turn off.
     let in_bundle = std::env::current_exe().is_ok_and(|p| p.to_string_lossy().contains(".app/Contents/MacOS"));
     let settings = store::load_settings();
+    sound::set_enabled(settings.sounds);
     if in_bundle && !settings.login_offered {
         login::set(true);
         store::save_settings(&store::Settings { login_offered: true, ..settings });

@@ -21,6 +21,8 @@ pub enum Key {
     Up,
     /// Another key was pressed while fn was held (fn+arrow, fn+delete…): not dictation.
     Cancel,
+    /// Esc during a take: throw it away.
+    Escape,
 }
 
 const FN_KEY: i64 = 63;
@@ -47,6 +49,13 @@ pub fn trusted(prompt: bool) -> bool {
 }
 
 const ESCAPE: i64 = 53;
+
+/// A take is recording, so Esc belongs to Heyra and no other app sees it.
+static TAKING: AtomicBool = AtomicBool::new(false);
+
+pub fn set_taking(on: bool) {
+    TAKING.store(on, Ordering::Relaxed);
+}
 
 /// The user's own push-to-talk button, if any.
 static BUTTON: Mutex<Option<Button>> = Mutex::new(None);
@@ -179,6 +188,11 @@ pub fn listen(on_key: impl Fn(Key) + 'static) -> Result<(), String> {
                     on_key(Key::Up);
                     return None;
                 }
+            }
+
+            if matches!(kind, CGEventType::KeyDown) && !mouse && code == ESCAPE && TAKING.load(Ordering::Relaxed) {
+                on_key(Key::Escape);
+                return None;
             }
 
             match kind {

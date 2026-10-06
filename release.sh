@@ -12,15 +12,22 @@ TAP=../homebrew-tap/Casks/heyra.rb
 HEYRA_SIGN="${HEYRA_SIGN:-Developer ID Application}" ./bundle.sh
 OUT=$(mktemp -d)
 ditto -c -k --keepParent target/Heyra.app "$OUT/Heyra.zip"
-xcrun notarytool submit "$OUT/Heyra.zip" --keychain-profile heyra --wait
-xcrun stapler staple target/Heyra.app
-rm "$OUT/Heyra.zip"
-ditto -c -k --keepParent target/Heyra.app "$OUT/Heyra.zip"
-spctl --assess --type execute -v target/Heyra.app
+# Notarize once the credentials are saved; until then the cask lifts the quarantine.
+if xcrun notarytool history --keychain-profile heyra >/dev/null 2>&1; then
+  xcrun notarytool submit "$OUT/Heyra.zip" --keychain-profile heyra --wait
+  xcrun stapler staple target/Heyra.app
+  rm "$OUT/Heyra.zip"
+  ditto -c -k --keepParent target/Heyra.app "$OUT/Heyra.zip"
+  spctl --assess --type execute -v target/Heyra.app
+else
+  echo "Not notarized: no notarytool credentials saved as \"heyra\""
+fi
 
 git tag "v$VERSION"
 git push origin main "v$VERSION"
-gh release create "v$VERSION" "$OUT/Heyra.zip" --title "Heyra $VERSION" --generate-notes
+# This version's section of CHANGELOG.md is the release notes.
+awk -v v="## $VERSION" '$0 == v {on=1; next} /^## / {on=0} on' CHANGELOG.md > "$OUT/notes.md"
+gh release create "v$VERSION" "$OUT/Heyra.zip" --title "Heyra $VERSION" --notes-file "$OUT/notes.md"
 
 SHA=$(shasum -a 256 "$OUT/Heyra.zip" | cut -d' ' -f1)
 sed -i '' -e "s/^  version \".*\"/  version \"$VERSION\"/" -e "s/^  sha256 \".*\"/  sha256 \"$SHA\"/" "$TAP"

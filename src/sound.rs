@@ -4,6 +4,7 @@
 #![allow(unexpected_cfgs)] // objc 0.2's macros check a cfg this crate doesn't declare
 
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use cocoa::base::id;
 use objc::{class, msg_send, sel, sel_impl};
@@ -24,8 +25,21 @@ struct Sounds {
 }
 
 static SOUNDS: OnceLock<Sounds> = OnceLock::new();
+static ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// The sounds switch in Settings.
+pub fn set_enabled(on: bool) {
+    ENABLED.store(on, Ordering::Relaxed);
+}
+
+pub fn enabled() -> bool {
+    ENABLED.load(Ordering::Relaxed)
+}
 
 pub fn play(cue: Cue) {
+    if !ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
     let sounds = SOUNDS.get_or_init(|| Sounds {
         start: make(&wav(&thock(440.0, 0.014, 0.12))),
         // A faint tap, then the lower thock just after it.

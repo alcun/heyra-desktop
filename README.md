@@ -39,8 +39,11 @@ the dot, or use the menu bar, to open your history and settings.
 
 - **Push to talk.** Hold fn. A glowing orb at the bottom of the screen shows it's
   listening. Let go and the text is pasted in, and your clipboard text is put back.
-  Pressing another key while holding fn (fn+arrow, fn+delete) cancels the take.
-  A soft click marks the start and end of each take.
+  Pressing another key while holding fn (fn+arrow, fn+delete), or Esc, cancels the take.
+  A soft click marks the start and end of each take (Settings can turn it off).
+- **"Press enter".** End a take with "press enter" and Heyra presses it after pasting.
+- **Any button.** Settings → Another button: any key, key combo or extra mouse button
+  also works as push-to-talk, alongside fn.
 - **Hands-free.** Double-tap fn to start, tap fn once (or the ✓ by the orb) to stop and
   paste. The ✕ stops without pasting; the text is still kept in History.
 - **Long takes.** Talk for up to 30 minutes in one go; long takes are written a minute
@@ -51,10 +54,12 @@ the dot, or use the menu bar, to open your history and settings.
   loaded (about 1.3 GB of memory) so it's ready the moment you press fn.
 - **History.** Every take is kept on your Mac. Click one to copy it again.
 - **Dictionary.** Fix words it mishears: `a cappy bar => capybara`.
-- **Any microphone.** Pick one in Settings.
-- **TING.** A Teenage Engineering EP-2350 works as a push-to-talk mic through
-  [ting-wispr](https://github.com/alcun/ting-wispr): its squeeze sends ctrl+opt+F12,
-  which Heyra also listens for.
+- **Any microphone.** Plug one in and Heyra switches to it, with a note above the dot.
+  Settings lists your mics with a live level. Optionally mutes the Mac while you talk.
+- **TING.** A Teenage Engineering EP-2350 is push-to-talk with nothing else installed:
+  choose its line-in as the mic and squeeze to talk. The bottom button presses Enter, the
+  middle one undoes. The TING needs the script from
+  [ting-wispr](https://github.com/alcun/ting-wispr) on its disk, once (`install-ting.sh`).
 
 Everything Heyra keeps is in `~/Library/Application Support/Heyra`.
 

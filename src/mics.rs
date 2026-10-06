@@ -31,6 +31,7 @@ struct Address {
 #[link(name = "CoreAudio", kind = "framework")]
 unsafe extern "C" {
     fn AudioObjectGetPropertyDataSize(object: u32, address: *const Address, qualifier_size: u32, qualifier: *const std::ffi::c_void, size: *mut u32) -> i32;
+    fn AudioObjectSetPropertyData(object: u32, address: *const Address, qualifier_size: u32, qualifier: *const std::ffi::c_void, size: u32, data: *const std::ffi::c_void) -> i32;
     fn AudioObjectGetPropertyData(object: u32, address: *const Address, qualifier_size: u32, qualifier: *const std::ffi::c_void, size: *mut u32, data: *mut std::ffi::c_void) -> i32;
 }
 
@@ -97,4 +98,32 @@ pub fn list() -> Vec<Mic> {
 /// The input macOS's Sound settings point at.
 pub fn default_name() -> Option<String> {
     name(get(SYSTEM, code(b"dIn "))?)
+}
+
+/// Mute or unmute the Mac's sound output; returns whether it was muted before,
+/// or None if the output can't be muted this way.
+pub fn mute_output(on: bool) -> Option<bool> {
+    let device: u32 = get(SYSTEM, code(b"dOut"))?;
+    let address = Address { selector: code(b"mute"), scope: code(b"outp"), element: 0 };
+    let mut was = 0u32;
+    let mut size = 4;
+    let status = unsafe { AudioObjectGetPropertyData(device, &address, 0, std::ptr::null(), &mut size, &mut was as *mut u32 as *mut _) };
+    if status != 0 {
+        return None;
+    }
+    let value = on as u32;
+    let status = unsafe { AudioObjectSetPropertyData(device, &address, 0, std::ptr::null(), 4, &value as *const u32 as *const _) };
+    (status == 0).then_some(was != 0)
+}
+
+#[cfg(test)]
+mod tests {
+    /// Touches the real speakers, so run by hand: cargo test -- --ignored mute
+    #[test]
+    #[ignore]
+    fn mute_and_restore() {
+        let was = super::mute_output(true).expect("output can be muted");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert_eq!(super::mute_output(was), Some(true));
+    }
 }

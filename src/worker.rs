@@ -2,6 +2,7 @@
 //! push-to-talk presses into pasted text. The UI only reads `State`.
 
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -106,8 +107,34 @@ const TAP: Duration = Duration::from_millis(300);
 /// Two taps this close together start hands-free.
 const DOUBLE_TAP: Duration = Duration::from_millis(500);
 
+/// The Settings switch for muting the Mac while a take records.
+pub static MUTE_WHILE_TALKING: AtomicBool = AtomicBool::new(false);
+
+/// The Mac's sound, muted for a take and put back as it was.
+#[derive(Default)]
+struct Mute {
+    on: bool,
+    /// It was already muted, so leave it muted after.
+    was_muted: bool,
+}
+
+impl Mute {
+    fn engage(&mut self) {
+        if !self.on {
+            self.on = true;
+            self.was_muted = crate::mics::mute_output(true).unwrap_or(true);
+        }
+    }
+
+    fn restore(&mut self) {
+        if std::mem::take(&mut self.on) && !self.was_muted {
+            crate::mics::mute_output(false);
+        }
+    }
+}
+
 /// Stop recording, transcribe the take and keep it in History; paste it unless `paste` is off.
-fn finish(state: &Shared, engine: &mut dyn Engine, recorder: &Recorder, paste: bool) {
+fn finish(state: &Shared, engine: &mut dyn Engine, recorder: &Recorder, paste: bool, mute: &mut Mute) {
     let samples = recorder.end();
     let secs = samples.len() as f32 / recorder.sample_rate as f32;
     let peak = samples.iter().fold(0f32, |m, x| m.max(x.abs()));
@@ -115,6 +142,7 @@ fn finish(state: &Shared, engine: &mut dyn Engine, recorder: &Recorder, paste: b
     if store::load_settings().keep_last_clip {
         store::save_clip(recorder.sample_rate, &samples);
     }
+    mute.restore(); // before the sound, so it's heard
     if secs < 0.4 {
         return;
     }
@@ -128,6 +156,10 @@ fn finish(state: &Shared, engine: &mut dyn Engine, recorder: &Recorder, paste: b
     let started = Instant::now();
     let raw = crate::engine::transcribe_long(engine, recorder.sample_rate, &samples);
     let text = store::apply_dictionary(&raw, &store::load_dictionary());
+    let (text, enter) = match store::press_enter(&text) {
+        Some(before) => (before, paste),
+        None => (text, false),
+    };
     let took = started.elapsed().as_secs_f32();
     store::log(&format!("transcribed in {took:.2}s, {} chars", text.len()));
     if !text.is_empty() {
@@ -140,6 +172,9 @@ fn finish(state: &Shared, engine: &mut dyn Engine, recorder: &Recorder, paste: b
         let entry = Entry { at: store::now(), text, secs, took };
         store::append_history(&entry);
         state.lock().unwrap().history.push(entry);
+    }
+    if enter {
+        let _ = crate::paste::tap(crate::paste::RETURN, false);
     }
 }
 
@@ -192,6 +227,8 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
     let mut pressed_at = Instant::now();
     let mut last_tap: Option<Instant> = None;
     let mut queue: Vec<Cmd> = Vec::new();
+    let mut mute = Mute::default();
+    MUTE_WHILE_TALKING.store(store::load_settings().mute_while_talking, Ordering::Relaxed);
     // Microphones come and go: a new one is switched to, as other dictation apps do.
     let mut known: Vec<String> = state.lock().unwrap().devices.iter().map(|m| m.name.clone()).collect();
     let mut scanned = Instant::now();
@@ -250,7 +287,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                 recording = false;
                 ignore_up = !hands_free;
                 hands_free = false;
-                finish(&state, engine.as_mut(), &recorder, true);
+                finish(&state, engine.as_mut(), &recorder, true, &mut mute);
                 ready(&state);
                 continue;
             }
@@ -260,6 +297,12 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
             Cmd::Press(code, command) => {
                 let _ = crate::paste::tap(code, command);
             }
+            Cmd::Key(Key::Escape) if recording => {
+                recording = false;
+                hands_free = false;
+                recorder.end();
+                ready(&state);
+            }
             Cmd::Key(Key::Cancel) if recording && !hands_free => {
                 recording = false;
                 recorder.end();
@@ -268,14 +311,14 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
             cmd @ (Cmd::Discard | Cmd::Finish) if hands_free => {
                 recording = false;
                 hands_free = false;
-                finish(&state, engine.as_mut(), &recorder, matches!(cmd, Cmd::Finish));
+                finish(&state, engine.as_mut(), &recorder, matches!(cmd, Cmd::Finish), &mut mute);
                 ready(&state);
             }
             Cmd::Key(Key::Down) if hands_free => {
                 recording = false;
                 hands_free = false;
                 ignore_up = true;
-                finish(&state, engine.as_mut(), &recorder, true);
+                finish(&state, engine.as_mut(), &recorder, true, &mut mute);
                 ready(&state);
             }
             Cmd::Key(Key::Down) if !recording => {
@@ -307,7 +350,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                     continue;
                 }
                 recording = false;
-                finish(&state, engine.as_mut(), &recorder, true);
+                finish(&state, engine.as_mut(), &recorder, true, &mut mute);
                 ready(&state);
             }
             Cmd::SetMic(name) if !recording => {
@@ -333,5 +376,12 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
             _ => {}
         }
         }
+        // A tap never mutes; a take that's really talking does.
+        if recording && MUTE_WHILE_TALKING.load(Ordering::Relaxed) && pressed_at.elapsed() > TAP {
+            mute.engage();
+        } else if !recording {
+            mute.restore();
+        }
+        crate::hotkey::set_taking(recording);
     }
 }

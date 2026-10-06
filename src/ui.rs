@@ -16,7 +16,8 @@ use gpui::{
 
 use crate::setup::{self, Mic};
 use crate::store;
-use crate::worker::{Cmd, Phase, Shared};
+use crate::worker::{Cmd, MUTE_WHILE_TALKING, Phase, Shared};
+use std::sync::atomic::Ordering;
 
 // ---- tokens ----
 const GROUND: u32 = 0x1f2026; // graphite, biased toward the slate
@@ -87,6 +88,28 @@ fn light(phase: Phase) -> Div {
 }
 
 /// The segmented meter: `lit` of `count` segments on, graded from slate to cream to gold.
+/// A setting that's on or off: a gold dot when on. `set` gets the new value.
+fn switch(id: &'static str, text: &'static str, on: bool, set: impl Fn(bool) + 'static) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .gap_3()
+        .py_2()
+        .cursor_pointer()
+        .on_click(move |_, _, _| set(!on))
+        .child(
+            div()
+                .flex_none()
+                .size(px(9.))
+                .rounded_full()
+                .border_1()
+                .border_color(rgb(if on { GOLD } else { DIM }))
+                .when(on, |d| d.bg(rgb(GOLD))),
+        )
+        .child(div().text_sm().text_color(rgb(if on { CREAM } else { SLATE })).child(text))
+}
+
 fn meter(count: usize, lit: usize, live: bool, horizontal: bool) -> Div {
     let segments = (0..count).map(move |i| {
         let on = i < lit;
@@ -594,6 +617,7 @@ impl Main {
                 section("PUSH TO TALK")
                     .child(div().text_sm().text_color(rgb(CREAM)).child("Hold fn, talk, let go."))
                     .child(hint("Double-tap fn for hands-free; tap fn or ✓ to paste, ✕ to keep it in History only."))
+                    .child(hint("Esc throws a take away. End with \"press enter\" and Heyra presses it after pasting."))
                     .child({
                         let recording = crate::hotkey::recording();
                         let chosen = crate::hotkey::button();
@@ -625,31 +649,18 @@ impl Main {
                     }))
                     .child(hint("If fn opens the emoji picker: System Settings → Keyboard → Press 🌐 key to → Do nothing.")),
             )
-            .child({
-                let on = crate::login::enabled();
-                section("START").child(
-                    div()
-                        .id("login")
-                        .flex()
-                        .items_center()
-                        .gap_3()
-                        .py_2()
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            crate::login::set(!on);
-                            cx.notify();
-                        }))
-                        .child(
-                            div()
-                                .size(px(9.))
-                                .rounded_full()
-                                .border_1()
-                                .border_color(rgb(if on { GOLD } else { DIM }))
-                                .when(on, |d| d.bg(rgb(GOLD))),
-                        )
-                        .child(div().text_sm().text_color(rgb(CREAM)).child("Open Heyra at login")),
-                )
-            })
+            .child(
+                section("SOUND")
+                    .child(switch("sounds", "Soft click when a take starts and ends", crate::sound::enabled(), |on| {
+                        crate::sound::set_enabled(on);
+                        store::save_settings(&store::Settings { sounds: on, ..store::load_settings() });
+                    }))
+                    .child(switch("mute", "Mute the Mac's sound while you talk", MUTE_WHILE_TALKING.load(Ordering::Relaxed), |on| {
+                        MUTE_WHILE_TALKING.store(on, Ordering::Relaxed);
+                        store::save_settings(&store::Settings { mute_while_talking: on, ..store::load_settings() });
+                    })),
+            )
+            .child(section("START").child(switch("login", "Open Heyra at login", crate::login::enabled(), crate::login::set)))
             .child(
                 section("SPEECH MODEL")
                     .child(div().text_sm().text_color(rgb(CREAM)).child("NVIDIA Parakeet TDT 0.6B v3, running on this Mac."))

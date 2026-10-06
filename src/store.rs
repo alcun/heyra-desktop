@@ -94,6 +94,20 @@ pub fn load_dictionary() -> Vec<(String, String)> {
 }
 
 /// Case-insensitive replace of whole phrases.
+/// A take ending in "press enter" is the words before it, then Enter.
+pub fn press_enter(text: &str) -> Option<String> {
+    let trimmed = text.trim_end_matches(|c: char| c.is_whitespace() || ".,!?;:".contains(c));
+    let cut = trimmed.len().checked_sub("press enter".len())?;
+    if !trimmed.is_char_boundary(cut) || !trimmed[cut..].eq_ignore_ascii_case("press enter") {
+        return None;
+    }
+    let before = &trimmed[..cut];
+    if before.chars().last().is_some_and(|c| c.is_alphanumeric()) {
+        return None; // "…express enter": not the command
+    }
+    Some(before.trim_end_matches(|c: char| c.is_whitespace() || ",;:".contains(c)).to_string())
+}
+
 pub fn apply_dictionary(text: &str, rules: &[(String, String)]) -> String {
     let mut out = text.to_string();
     for (heard, meant) in rules {
@@ -122,7 +136,7 @@ pub fn apply_dictionary(text: &str, rules: &[(String, String)]) -> String {
 
 // ---- settings ----
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Settings {
     /// Microphone name; None = the system default.
     pub mic: Option<String>,
@@ -136,6 +150,22 @@ pub struct Settings {
     /// A push-to-talk button of the user's choosing, alongside fn.
     #[serde(default)]
     pub button: Option<Button>,
+    /// The soft click when a take starts and ends.
+    #[serde(default = "yes")]
+    pub sounds: bool,
+    /// Mute the Mac's sound output while a take is recording.
+    #[serde(default)]
+    pub mute_while_talking: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self { mic: None, keep_last_clip: false, login_offered: false, button: None, sounds: true, mute_while_talking: false }
+    }
 }
 
 /// A key (with the modifiers held with it) or an extra mouse button.
@@ -178,7 +208,16 @@ pub fn save_settings(settings: &Settings) {
 
 #[cfg(test)]
 mod tests {
-    use super::apply_dictionary;
+    use super::{apply_dictionary, press_enter};
+
+    #[test]
+    fn press_enter_at_the_end() {
+        assert_eq!(press_enter("Fix the bug. Press enter."), Some("Fix the bug.".into()));
+        assert_eq!(press_enter("ship it, press enter"), Some("ship it".into()));
+        assert_eq!(press_enter("Press Enter."), Some("".into()));
+        assert_eq!(press_enter("Don't press enter yet, I'm thinking."), None);
+        assert_eq!(press_enter("Express enter"), None);
+    }
 
     #[test]
     fn replaces_whole_phrases_ignoring_case() {
