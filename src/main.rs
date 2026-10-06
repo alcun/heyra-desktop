@@ -297,6 +297,14 @@ fn main() {
     }
 
     let state = worker::new_state();
+    // `heyra --preview-toast`: the app as usual, with a toast up for design work.
+    if args.iter().any(|a| a == "--preview-toast") {
+        let state = state.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(5));
+            state.lock().unwrap().toast = Some(("Using".into(), "CUBILUX HLMS-C4 Line IN".into(), Instant::now()));
+        });
+    }
     if args.len() == 2 && args[1] == "--preview-orb" {
         return preview_orb(state);
     }
@@ -425,14 +433,17 @@ fn main() {
                         _ => {}
                     }
                     // A toast lasts three seconds; a newer one replaces it.
-                    let fresh = note.as_ref().filter(|(_, at)| at.elapsed() < TOAST_FOR);
+                    let fresh = note.as_ref().filter(|(_, _, at)| at.elapsed() < TOAST_FOR);
                     let shown = toast.as_ref().map(|(_, at)| *at);
-                    if fresh.map(|(_, at)| *at) != shown {
+                    if fresh.map(|(_, _, at)| *at) != shown {
                         if let Some((h, _)) = toast.take() {
                             let _ = h.update(cx, |_, window, _| window.remove_window());
                         }
-                        if let (Some((text, at)), Some(centre)) = (fresh, orb.centre()) {
-                            toast = ui::open_toast(cx, centre, text.clone()).map(|h| (h, *at));
+                        if let (Some((lead, text, at)), Some(centre)) = (fresh, orb.centre()) {
+                            // Just above the resting dot; above the whole orb while it's awake.
+                            let above = if phase == Phase::Ready { 28. } else { 74. };
+                            let view = ui::Toast { lead: lead.clone(), text: text.clone() };
+                            toast = ui::open_toast(cx, centre, above, view).map(|h| (h, *at));
                         }
                     }
                     for ((_, _, cmd), clicked) in buttons.iter().zip(&pressed) {

@@ -5,7 +5,7 @@
 //! for your words. One segmented level meter, shared by the deck and the edge gauge.
 
 use std::sync::mpsc::Sender;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use chrono::{Local, TimeZone};
 use gpui::{
@@ -820,20 +820,26 @@ impl Render for OrbButton {
     }
 }
 
-/// A short note above the dot: "Using CUBILUX HLMS-C4 Line IN".
+/// A short note above the dot: "Using  CUBILUX HLMS-C4 Line IN".
 pub struct Toast {
+    pub lead: String,
     pub text: String,
 }
 
-const TOAST_HEIGHT: f32 = 28.;
+const TOAST_HEIGHT: f32 = 30.;
+/// Room around the pill for its shadow.
+const TOAST_MARGIN: f32 = 36.;
 
-pub fn open_toast(cx: &mut App, centre: (f64, f64), text: String) -> Option<gpui::WindowHandle<Toast>> {
-    // Monospace, so the width follows the length; clear of the orb and its buttons.
-    let width = text.chars().count() as f32 * 7.3 + 40.;
-    let origin = point(px(centre.0 as f32 - width / 2.), px(centre.1 as f32 - 76. - TOAST_HEIGHT / 2.));
+/// `above`: how far above the dot's centre the pill sits.
+pub fn open_toast(cx: &mut App, centre: (f64, f64), above: f32, toast: Toast) -> Option<gpui::WindowHandle<Toast>> {
+    // Generous for Plex Sans at this size; the pill itself sizes to its words.
+    let chars = (toast.lead.chars().count() + toast.text.chars().count()) as f32;
+    let width = chars * 7.4 + 70. + TOAST_MARGIN * 2.;
+    let height = TOAST_HEIGHT + TOAST_MARGIN * 2.;
+    let origin = point(px(centre.0 as f32 - width / 2.), px(centre.1 as f32 - above - height / 2.));
     cx.open_window(
         WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds { origin, size: size(px(width), px(TOAST_HEIGHT)) })),
+            window_bounds: Some(WindowBounds::Windowed(Bounds { origin, size: size(px(width), px(height)) })),
             titlebar: None,
             focus: false,
             show: true,
@@ -844,28 +850,83 @@ pub fn open_toast(cx: &mut App, centre: (f64, f64), text: String) -> Option<gpui
             window_background: gpui::WindowBackgroundAppearance::Transparent,
             ..Default::default()
         },
-        |_, cx| cx.new(|_| Toast { text }),
+        |_, cx| cx.new(|_| toast),
     )
     .ok()
     .inspect(|handle| {
-        let _ = handle.update(cx, |_, window, _| no_shadow(window));
+        let _ = handle.update(cx, |_, window, _| {
+            no_shadow(window);
+            click_through(window);
+        });
     })
 }
 
 impl Render for Toast {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
+        // The resting dot in miniature: black, with its gold point.
+        let dot = div()
+            .flex_none()
+            .size(px(12.))
             .rounded_full()
-            .bg(alpha(GROUND, 0.94))
+            .bg(rgb(0x0c0c0f))
             .border_1()
-            .border_color(rgb(HAIR))
+            .border_color(alpha(CREAM, 0.10))
             .flex()
             .items_center()
             .justify_center()
-            .gap_2()
-            .child(div().flex_none().size(px(5.)).rounded_full().bg(rgb(GOLD)))
-            .child(div().font_family(MONO).text_size(px(11.5)).text_color(rgb(CREAM)).child(self.text.clone()))
+            .child(div().size(px(3.)).rounded_full().bg(rgb(GOLD)));
+        let pill = div()
+            .h(px(TOAST_HEIGHT))
+            .pl(px(9.))
+            .pr(px(14.))
+            .rounded_full()
+            .bg(gpui::linear_gradient(
+                180.,
+                gpui::linear_color_stop(alpha(0x30323c, 0.97), 0.),
+                gpui::linear_color_stop(alpha(GROUND, 0.97), 1.),
+            ))
+            .border_1()
+            .border_color(alpha(CREAM, 0.07))
+            .shadow(vec![gpui::BoxShadow {
+                color: alpha(0x000000, 0.32),
+                offset: point(px(0.), px(3.)),
+                blur_radius: px(10.),
+                spread_radius: px(0.),
+            }])
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .font_family(SANS)
+            .text_size(px(12.5))
+            .child(dot)
+            .child(div().text_color(rgb(SLATE)).child(self.lead.clone()))
+            .child(div().font_weight(gpui::FontWeight::MEDIUM).text_color(rgb(CREAM)).child(self.text.clone()));
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(gpui::AnimationExt::with_animation(pill,
+                "toast-in",
+                gpui::Animation::new(Duration::from_millis(320)).with_easing(gpui::ease_out_quint()),
+                |pill, t| pill.opacity(t).mt(px(8. * (1. - t))),
+            ))
+    }
+}
+
+/// The toast only informs: clicks go to whatever is under it.
+#[allow(unexpected_cfgs)]
+fn click_through(window: &Window) {
+    use objc::runtime::{Object, YES};
+    use objc::{msg_send, sel, sel_impl};
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let Ok(handle) = HasWindowHandle::window_handle(window) else { return };
+    if let RawWindowHandle::AppKit(appkit) = handle.as_raw() {
+        unsafe {
+            let view = appkit.ns_view.as_ptr() as *mut Object;
+            let native: *mut Object = msg_send![view, window];
+            let _: () = msg_send![native, setIgnoresMouseEvents: YES];
+        }
     }
 }
 

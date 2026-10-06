@@ -39,8 +39,8 @@ pub struct State {
     pub hands_free: bool,
     /// A TING has been heard on the microphone in use.
     pub ting_heard: bool,
-    /// A short note shown above the dot, and when it was posted.
-    pub toast: Option<(String, Instant)>,
+    /// A short note shown above the dot: a quiet lead word, the news, and when.
+    pub toast: Option<(String, String, Instant)>,
 }
 
 pub type Shared = Arc<Mutex<State>>;
@@ -195,8 +195,8 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
     // Microphones come and go: a new one is switched to, as other dictation apps do.
     let mut known: Vec<String> = state.lock().unwrap().devices.iter().map(|m| m.name.clone()).collect();
     let mut scanned = Instant::now();
-    // Said above the dot once the switch it describes has happened: "Using " + the mic.
-    let mut announce: Option<String> = None;
+    // A switch Heyra made by itself is said above the dot once it has happened.
+    let mut announce = false;
     loop {
         match cmds.recv_timeout(Duration::from_millis(30)) {
             Ok(cmd) => queue.push(cmd),
@@ -217,11 +217,11 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                 let pick = added.iter().find(|m| m.name.to_lowercase().contains("line in")).or(added.first());
                 if let Some(mic) = pick {
                     store::log(&format!("new microphone: {}", mic.name));
-                    announce = Some("Using ".into());
+                    announce = true;
                     queue.push(Cmd::SetMic(Some(mic.name.clone())));
                 } else if !names.contains(&recorder.device_name) {
                     store::log(&format!("microphone gone: {}", recorder.device_name));
-                    announce = Some(format!("{} unplugged · using ", recorder.device_name));
+                    announce = true;
                     queue.push(Cmd::SetMic(None));
                 }
                 known = names;
@@ -240,7 +240,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
             let mut s = state.lock().unwrap();
             if !s.ting_heard {
                 s.ting_heard = true;
-                s.toast = Some(("TING connected".into(), Instant::now()));
+                s.toast = Some(("Connected".into(), "TING".into(), Instant::now()));
             }
         }
         // The level shows in Settings too, so a mic can be checked without talking to an app.
@@ -325,8 +325,8 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                         None => return,
                     },
                 };
-                if let Some(text) = announce.take() {
-                    state.lock().unwrap().toast = Some((text + &recorder.device_name, Instant::now()));
+                if std::mem::take(&mut announce) {
+                    state.lock().unwrap().toast = Some(("Using".into(), recorder.device_name.clone(), Instant::now()));
                 }
                 ready(&state);
             }
