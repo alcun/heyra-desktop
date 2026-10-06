@@ -1,6 +1,6 @@
 [package]
 name = "heyra"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2024"
 description = "Hold fn, talk, let go: local push-to-talk dictation for macOS"
 license = "MIT"

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.3
+
+- The microphone opens as soon as it's allowed, while the voice model is still downloading,
+  so the welcome window's orb follows your voice straight away.
+
 ## 0.3.2
 
 - Welcome: "Allow microphone" asks macOS straight away and moves on with the answer

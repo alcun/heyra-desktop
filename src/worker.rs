@@ -187,37 +187,53 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
         let mut s = state.lock().unwrap();
         s.message = "Loading the speech model…".into();
     }
-    let dir = match crate::model::find() {
-        Some(dir) => dir,
-        None => {
-            let progress_state = state.clone();
-            let got = crate::model::download(move |done, total| {
-                let mut s = progress_state.lock().unwrap();
-                let mb = |b: u64| b / 1_000_000;
-                s.progress = (total > 0).then(|| done as f32 / total as f32);
-                s.message = if total > 0 {
-                    format!("Downloading the speech model, once: {} of {} MB", mb(done), mb(total))
-                } else {
-                    format!("Downloading the speech model, once: {} MB", mb(done))
-                };
+    // The model downloads and loads on its own thread, so the microphone can open
+    // (and the welcome window's orb follow your voice) as soon as it's allowed.
+    let loader = {
+        let state = state.clone();
+        std::thread::spawn(move || -> Result<Box<dyn Engine>, String> {
+            let dir = match crate::model::find() {
+                Some(dir) => dir,
+                None => {
+                    let progress_state = state.clone();
+                    let got = crate::model::download(move |done, total| {
+                        let mut s = progress_state.lock().unwrap();
+                        let mb = |b: u64| b / 1_000_000;
+                        s.progress = (total > 0).then(|| done as f32 / total as f32);
+                        s.message = if total > 0 {
+                            format!("Downloading the speech model, once: {} of {} MB", mb(done), mb(total))
+                        } else {
+                            format!("Downloading the speech model, once: {} MB", mb(done))
+                        };
+                    });
+                    state.lock().unwrap().progress = None;
+                    got?
+                }
+            };
+            state.lock().unwrap().message = "Loading the speech model…".into();
+            Ok(Box::new(Parakeet::load(&dir)?))
+        })
+    };
+    let mut recorder: Option<Recorder> = None;
+    while recorder.is_none() || !loader.is_finished() {
+        if recorder.is_none() && state.lock().unwrap().mic_go {
+            let mic = state.lock().unwrap().mic.clone();
+            recorder = Some(match open_mic(&state, mic.as_deref()) {
+                Some(r) => r,
+                None => return,
             });
-            state.lock().unwrap().progress = None;
-            match got {
-                Ok(dir) => dir,
-                Err(e) => return fail(&state, e),
-            }
         }
-    };
-    state.lock().unwrap().message = "Loading the speech model…".into();
-    let mut engine: Box<dyn Engine> = match Parakeet::load(&dir) {
-        Ok(engine) => Box::new(engine),
-        Err(e) => return fail(&state, e),
-    };
-    while !state.lock().unwrap().mic_go {
-        std::thread::sleep(Duration::from_millis(200));
+        if let Some(r) = &recorder {
+            state.lock().unwrap().level = r.level();
+        }
+        std::thread::sleep(Duration::from_millis(30));
     }
-    let mic = state.lock().unwrap().mic.clone();
-    let Some(mut recorder) = open_mic(&state, mic.as_deref()) else { return };
+    let mut recorder = recorder.unwrap();
+    let mut engine = match loader.join() {
+        Ok(Ok(engine)) => engine,
+        Ok(Err(e)) => return fail(&state, e),
+        Err(_) => return fail(&state, "the speech model crashed while loading".into()),
+    };
     let ready = |state: &Shared| {
         let mut s = state.lock().unwrap();
         s.phase = Phase::Ready;
