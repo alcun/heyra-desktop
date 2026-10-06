@@ -259,7 +259,7 @@ impl Render for Onboarding {
             Step::Try => ("Try it".into(), "Hold fn and say something.\nLet go when you're done.".into(), None, Some("Skip")),
             Step::Ready => (
                 "You're ready".into(),
-                "Click into any text box, hold fn and talk.\nDouble-tap fn for hands-free. Another key can be set in Settings.\nEvery take is kept in History, on this Mac, to copy again.\nHeyra lives in the dot at the bottom of your screen.".into(),
+                "Click into any text box, hold fn and talk.\nDouble-tap fn for hands-free.\nYou can change the key in Settings.\nEvery take is saved in History, on this Mac.\nHeyra lives in the dot at the bottom of your screen.".into(),
                 Some("Start"),
                 Some("Open Heyra"),
             ),
@@ -328,7 +328,7 @@ impl Render for Onboarding {
             })
             .child(
                 div()
-                    .max_w(px(340.))
+                    .max_w(px(400.))
                     .text_center()
                     .text_size(px(14.))
                     .line_height(px(22.))

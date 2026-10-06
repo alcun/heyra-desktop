@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.6
+
+- Welcome: the last step's lines no longer wrap around the fn key; clearer wording.
+
 ## 0.3.5
 
 - Welcome: fn drawn as the key (🌐 fn), plainer wording, and the last step mentions
