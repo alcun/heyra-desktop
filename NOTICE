@@ -15,3 +15,7 @@ GPUI (user interface) - Apache License 2.0
 IBM Plex Sans and IBM Plex Mono (fonts) - SIL Open Font License 1.1
   https://github.com/IBM/plex
   Licence text: assets/fonts/OFL.txt
+
+tingle (TING chirp decoder, ported to Rust in src/ting.rs) - MIT License
+  https://github.com/tutorintelligence/tingle
+  Copyright (c) 2026 Tutor Intelligence, Inc. Licence text: LICENSE.tingle
