@@ -6,6 +6,7 @@ mod engine;
 mod hotkey;
 mod login;
 mod mics;
+mod onboarding;
 mod model;
 mod gpu_orb;
 mod paste;
@@ -98,12 +99,7 @@ fn preview_orb(state: worker::Shared) {
 struct OrbDriver {
     overlay: Option<gpu_orb::Overlay>,
     last: std::time::Instant,
-    clock: f32,
-    wave: f32,
-    twist: f32,
-    smooth: f32,
-    writing: f32,
-    scale: f32,
+    motion: gpu_orb::Motion,
     /// The resting dot never changes, so it's drawn once and left alone.
     rested: bool,
 }
@@ -122,12 +118,7 @@ impl OrbDriver {
         Self {
             overlay,
             last: std::time::Instant::now(),
-            clock: 0.0,
-            wave: 0.0,
-            twist: 1.0,
-            smooth: 0.0,
-            writing: 0.0,
-            scale: IDLE_SCALE,
+            motion: gpu_orb::Motion::new(IDLE_SCALE),
             rested: false,
         }
     }
@@ -154,33 +145,16 @@ impl OrbDriver {
         let writing = phase == Phase::Transcribing;
         let active = listening || writing;
 
-        let target = if listening { (level * 1.25).min(1.0) } else { 0.0 };
-        let rate = if target > self.smooth { 0.35 } else { 0.07 };
-        self.smooth += (target - self.smooth) * rate;
         // Hovering the resting dot: it grows a little and spins gold.
-        let gold = writing || hovering;
-        self.writing += ((if gold { 1.0 } else { 0.0 }) - self.writing) * 0.12;
-        let scale_target = if active { 1.0 } else if hovering { HOVER_SCALE } else { IDLE_SCALE };
-        self.scale += (scale_target - self.scale) * if active { 0.22 } else { 0.1 };
-        let twist_target = if writing { 0.35 } else { 1.0 + 1.6 * self.smooth };
-        self.twist += (twist_target - self.twist) * 0.08;
-        self.wave += dt * (if gold { 3.2 } else if listening { 0.6 + 2.0 * self.smooth } else { 0.25 });
-        self.clock += dt * (if active || hovering { 0.8 + 1.2 * self.smooth } else { 0.3 });
+        let size = if active { 1.0 } else if hovering { HOVER_SCALE } else { IDLE_SCALE };
+        self.motion.step(dt, listening, writing, hovering, level, size);
 
-        let settled = !active && !hovering && (self.scale - IDLE_SCALE).abs() < 0.002;
+        let settled = !active && !hovering && (self.motion.scale - IDLE_SCALE).abs() < 0.002;
         if settled && self.rested {
             return;
         }
         self.rested = settled;
-        overlay.draw(gpu_orb::Uniforms {
-            time: self.clock,
-            voice: self.smooth,
-            wave: self.wave,
-            twist: self.twist,
-            writing: self.writing,
-            scale: self.scale,
-            ..Default::default()
-        });
+        overlay.draw(self.motion.uniforms());
     }
 }
 
@@ -309,13 +283,17 @@ fn main() {
         return preview_orb(state);
     }
     let (tx, rx) = mpsc::channel::<Cmd>();
+    let settings = store::load_settings();
+    // First run: the welcome window explains, then asks; `--onboarding` shows it again.
+    let welcome = !settings.onboarded || args.iter().any(|a| a == "--onboarding");
 
     {
         // Watch the keyboard. Without Accessibility, ask once, then retry until it's granted.
         let state = state.clone();
         let tx = tx.clone();
         std::thread::spawn(move || {
-            let mut asked = false;
+            // On the first run the welcome window asks, after saying why.
+            let mut asked = welcome;
             while !hotkey::trusted(!asked) {
                 asked = true;
                 state.lock().unwrap().blocker = Some(
@@ -351,11 +329,10 @@ fn main() {
 
     // First run from the app bundle: open at login, which Settings can turn off.
     let in_bundle = std::env::current_exe().is_ok_and(|p| p.to_string_lossy().contains(".app/Contents/MacOS"));
-    let settings = store::load_settings();
     sound::set_enabled(settings.sounds);
     if in_bundle && !settings.login_offered {
         login::set(true);
-        store::save_settings(&store::Settings { login_offered: true, ..settings });
+        store::save_settings(&store::Settings { login_offered: true, ..store::load_settings() });
     }
     let app = Application::new();
     {
@@ -376,7 +353,12 @@ fn main() {
             Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexMono-Regular.ttf").as_slice()),
             Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexMono-Medium.ttf").as_slice()),
         ]);
-        ui::open_main(cx, state.clone(), tx.clone());
+        if welcome {
+            onboarding::open(cx, state.clone());
+            store::save_settings(&store::Settings { onboarded: true, ..store::load_settings() });
+        } else {
+            ui::open_main(cx, state.clone(), tx.clone());
+        }
         let tray = tray::Tray::new();
         let main_state = state.clone();
         let main_tx = tx.clone();
@@ -451,6 +433,11 @@ fn main() {
                         if clicked.replace(false) {
                             let _ = main_tx.send(cmd());
                         }
+                    }
+                    // Welcome closed before the microphone step: open it anyway.
+                    if cx.windows().iter().all(|w| w.downcast::<onboarding::Onboarding>().is_none()) {
+                        let mut s = state.lock().unwrap();
+                        s.mic_go = true;
                     }
                     let open_from_dot = clicked.replace(false);
                     let action = tray.as_ref().and_then(|t| t.poll()).or(open_from_dot.then_some(tray::Action::Open));

@@ -20,20 +20,20 @@ use crate::worker::{Cmd, MUTE_WHILE_TALKING, Phase, Shared};
 use std::sync::atomic::Ordering;
 
 // ---- tokens ----
-const GROUND: u32 = 0x1f2026; // graphite, biased toward the slate
-const PANEL: u32 = 0x262831;
-const RAIL: u32 = 0x1a1b20;
-const HAIR: u32 = 0x343744;
-const CREAM: u32 = 0xede0c4; // readouts and your words
-const SLATE: u32 = 0x8a9aa6; // labels
-const DIM: u32 = 0x5b6470; // off segments, quiet text
-const GOLD: u32 = 0xd9a86a; // live signal
-const REC: u32 = 0xe0795a; // recording light
+pub const GROUND: u32 = 0x1f2026; // graphite, biased toward the slate
+pub const PANEL: u32 = 0x262831;
+pub const RAIL: u32 = 0x1a1b20;
+pub const HAIR: u32 = 0x343744;
+pub const CREAM: u32 = 0xede0c4; // readouts and your words
+pub const SLATE: u32 = 0x8a9aa6; // labels
+pub const DIM: u32 = 0x5b6470; // off segments, quiet text
+pub const GOLD: u32 = 0xd9a86a; // live signal
+pub const REC: u32 = 0xe0795a; // recording light
 
 pub const SANS: &str = "IBM Plex Sans";
 pub const MONO: &str = "IBM Plex Mono";
 
-fn alpha(color: u32, a: f32) -> Hsla {
+pub fn alpha(color: u32, a: f32) -> Hsla {
     let mut c: Hsla = rgb(color).into();
     c.a = a;
     c

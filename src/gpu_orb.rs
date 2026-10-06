@@ -152,6 +152,51 @@ pub struct Uniforms {
     pub scale: f32,
 }
 
+/// How the orb moves: eased toward the voice, gold while writing. Shared by the
+/// overlay and the welcome window so they feel the same.
+pub struct Motion {
+    clock: f32,
+    wave: f32,
+    twist: f32,
+    smooth: f32,
+    writing: f32,
+    pub scale: f32,
+}
+
+impl Motion {
+    pub fn new(scale: f32) -> Self {
+        Self { clock: 0.0, wave: 0.0, twist: 1.0, smooth: 0.0, writing: 0.0, scale }
+    }
+
+    /// One frame. `listening`: follow `level`; `writing`: spin gold; `hovering`: a
+    /// little gold at rest. `size` is the scale to ease toward.
+    pub fn step(&mut self, dt: f32, listening: bool, writing: bool, hovering: bool, level: f32, size: f32) {
+        let active = listening || writing;
+        let target = if listening { (level * 1.25).min(1.0) } else { 0.0 };
+        let rate = if target > self.smooth { 0.35 } else { 0.07 };
+        self.smooth += (target - self.smooth) * rate;
+        let gold = writing || hovering;
+        self.writing += ((if gold { 1.0 } else { 0.0 }) - self.writing) * 0.12;
+        self.scale += (size - self.scale) * if active { 0.22 } else { 0.1 };
+        let twist_target = if writing { 0.35 } else { 1.0 + 1.6 * self.smooth };
+        self.twist += (twist_target - self.twist) * 0.08;
+        self.wave += dt * (if gold { 3.2 } else if listening { 0.6 + 2.0 * self.smooth } else { 0.25 });
+        self.clock += dt * (if active || hovering { 0.8 + 1.2 * self.smooth } else { 0.3 });
+    }
+
+    pub fn uniforms(&self) -> Uniforms {
+        Uniforms {
+            time: self.clock,
+            voice: self.smooth,
+            wave: self.wave,
+            twist: self.twist,
+            writing: self.writing,
+            scale: self.scale,
+            ..Default::default()
+        }
+    }
+}
+
 pub struct Gpu {
     device: Device,
     queue: CommandQueue,

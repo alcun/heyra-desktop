@@ -156,6 +156,9 @@ pub struct Settings {
     /// Mute the Mac's sound output while a take is recording.
     #[serde(default)]
     pub mute_while_talking: bool,
+    /// The welcome window has been shown.
+    #[serde(default)]
+    pub onboarded: bool,
 }
 
 fn yes() -> bool {
@@ -164,7 +167,7 @@ fn yes() -> bool {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { mic: None, keep_last_clip: false, login_offered: false, button: None, sounds: true, mute_while_talking: false }
+        Self { mic: None, keep_last_clip: false, login_offered: false, button: None, sounds: true, mute_while_talking: false, onboarded: false }
     }
 }
 

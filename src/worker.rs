@@ -40,6 +40,9 @@ pub struct State {
     pub hands_free: bool,
     /// A TING has been heard on the microphone in use.
     pub ting_heard: bool,
+    /// The microphone may be opened. On the first run it waits for the welcome
+    /// window, so macOS's question comes after Heyra has said why.
+    pub mic_go: bool,
     /// A short note shown above the dot: a quiet lead word, the news, and when.
     pub toast: Option<(String, String, Instant)>,
 }
@@ -72,6 +75,7 @@ pub fn new_state() -> Shared {
         blocker: None,
         hands_free: false,
         ting_heard: false,
+        mic_go: store::load_settings().onboarded || crate::setup::check().mic != crate::setup::Mic::Unknown,
         toast: None,
     }))
 }
@@ -209,6 +213,9 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
         Ok(engine) => Box::new(engine),
         Err(e) => return fail(&state, e),
     };
+    while !state.lock().unwrap().mic_go {
+        std::thread::sleep(Duration::from_millis(200));
+    }
     let mic = state.lock().unwrap().mic.clone();
     let Some(mut recorder) = open_mic(&state, mic.as_deref()) else { return };
     let ready = |state: &Shared| {
