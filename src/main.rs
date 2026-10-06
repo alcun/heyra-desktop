@@ -212,6 +212,44 @@ fn main() {
         image::RgbaImage::from_raw(size as u32, size as u32, px).unwrap().save(&args[2]).unwrap();
         return;
     }
+    if args.len() == 4 && args[1] == "--orb-frames" {
+        // `heyra --orb-frames <dir> <count>`: one seamless loop of the orb on the page's
+        // graphite, for the README. The shader repeats every 2π/0.35 s of its clock.
+        let gpu = gpu_orb::Gpu::new().expect("metal");
+        let dir = std::path::Path::new(&args[2]);
+        std::fs::create_dir_all(dir).unwrap();
+        let count: usize = args[3].parse().unwrap_or(96);
+        let size = 360u64;
+        let period = std::f32::consts::TAU / 0.35;
+        let bg = [0x12u8 as f32, 0x13u8 as f32, 0x18u8 as f32];
+        for i in 0..count {
+            let phase = i as f32 / count as f32;
+            let voice = 0.3 + 0.3 * (std::f32::consts::TAU * phase).sin();
+            let u = gpu_orb::Uniforms {
+                res: [size as f32, size as f32],
+                time: period * phase,
+                voice,
+                wave: std::f32::consts::TAU * 2.0 * phase,
+                twist: 1.0 + 1.6 * voice,
+                writing: 0.0,
+                scale: 1.0,
+            };
+            let px = gpu.snapshot(size, &u);
+            // Premultiplied BGRA over the page colour, to RGB.
+            let mut rgb = Vec::with_capacity((size * size * 3) as usize);
+            for p in px.chunks(4) {
+                let a = p[3] as f32 / 255.0;
+                for (c, b) in [p[2], p[1], p[0]].into_iter().zip(bg) {
+                    rgb.push((c as f32 + b * (1.0 - a)).min(255.0) as u8);
+                }
+            }
+            image::RgbImage::from_raw(size as u32, size as u32, rgb)
+                .unwrap()
+                .save(dir.join(format!("{i:03}.png")))
+                .unwrap();
+        }
+        return;
+    }
     if args.len() == 2 && args[1] == "--fetch-model" {
         // Exercise the first-run download without the window.
         let result = model::find().map(Ok).unwrap_or_else(|| {

@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/orb.gif" width="220" alt="The Heyra orb: light swirling inside a dark sphere"></p>
+
 # Heyra
 
 Hold **fn**, talk, let go. Your words are typed wherever your cursor is.
