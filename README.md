@@ -20,6 +20,14 @@ words never leave the machine. No account, no subscription.
    brew install --cask alcun/tap/heyra
    ```
 
+   No admin rights (a work Mac)? Install into your own Applications folder instead, for
+   this and every upgrade:
+
+   ```sh
+   echo 'export HOMEBREW_CASK_OPTS="--appdir=~/Applications"' >> ~/.zshrc && source ~/.zshrc
+   brew install --cask alcun/tap/heyra
+   ```
+
    Or download `Heyra.zip` from [Releases](https://github.com/alcun/heyra-desktop/releases),
    unzip it and move **Heyra** to Applications. It isn't notarized by Apple yet, so the
    first time macOS blocks it: System Settings → Privacy & Security → **Open Anyway**.
