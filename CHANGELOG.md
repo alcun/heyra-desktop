@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.7
+
+- Welcome: the last step is two, "You're ready" and "Everything stays here".
+
 ## 0.3.6
 
 - Welcome: the last step's lines no longer wrap around the fn key; clearer wording.

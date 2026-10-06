@@ -29,6 +29,7 @@ enum Step {
     FnKey,
     Try,
     Ready,
+    Keep,
 }
 
 pub struct Onboarding {
@@ -82,14 +83,14 @@ impl Onboarding {
             Step::Microphone => checks.mic == Mic::Allowed,
             Step::Access => checks.accessibility,
             Step::FnKey => checks.fn_free,
-            Step::Welcome | Step::Try | Step::Ready => false,
+            Step::Welcome | Step::Try | Step::Ready | Step::Keep => false,
         }
     }
 
     fn advance(&mut self) {
-        const ORDER: [Step; 6] = [Step::Welcome, Step::Microphone, Step::Access, Step::FnKey, Step::Try, Step::Ready];
+        const ORDER: [Step; 7] = [Step::Welcome, Step::Microphone, Step::Access, Step::FnKey, Step::Try, Step::Ready, Step::Keep];
         let at = ORDER.iter().position(|&s| s == self.step).unwrap_or(0);
-        self.step = ORDER[at + 1..].iter().copied().find(|&s| !self.done(s)).unwrap_or(Step::Ready);
+        self.step = ORDER[at + 1..].iter().copied().find(|&s| !self.done(s)).unwrap_or(Step::Keep);
         if self.step == Step::Try {
             self.takes_before = self.state.lock().unwrap().history.len();
         }
@@ -259,7 +260,13 @@ impl Render for Onboarding {
             Step::Try => ("Try it".into(), "Hold fn and say something.\nLet go when you're done.".into(), None, Some("Skip")),
             Step::Ready => (
                 "You're ready".into(),
-                "Click into any text box, hold fn and talk.\nDouble-tap fn for hands-free.\nYou can change the key in Settings.\nEvery take is saved in History, on this Mac.\nHeyra lives in the dot at the bottom of your screen.".into(),
+                "Click into any text box, hold fn and talk.\nDouble-tap fn for hands-free.".into(),
+                Some("Continue"),
+                None,
+            ),
+            Step::Keep => (
+                "Everything stays here".into(),
+                "Every take is saved in History, on this Mac.\nChange the key any time in Settings.\nHeyra lives in the dot at the bottom of your screen.".into(),
                 Some("Start"),
                 Some("Open Heyra"),
             ),
@@ -288,8 +295,9 @@ impl Render for Onboarding {
                 }
                 Step::FnKey => setup::open_settings(setup::PANE_KEYBOARD),
                 Step::Try => this.advance(),
+                Step::Ready => this.advance(),
                 // Off it goes, to the dot it lives in.
-                Step::Ready => {
+                Step::Keep => {
                     this.state.lock().unwrap().toast =
                         Some(("Ready".into(), "Hold fn anywhere".into(), Instant::now()));
                     window.remove_window();
@@ -298,7 +306,7 @@ impl Render for Onboarding {
             cx.notify();
         });
         let skip = cx.listener(move |this, _, window, cx| {
-            if step == Step::Ready {
+            if step == Step::Keep {
                 window.remove_window();
                 crate::ui::open_main(cx, this.state.clone(), this.cmds.clone());
             } else {
