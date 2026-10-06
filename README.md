@@ -14,10 +14,17 @@ words never leave the machine. No account, no subscription.
 
 ## Install
 
-1. Download `Heyra.zip` from [Releases](https://github.com/alcun/heyra-desktop/releases),
-   unzip it and move **Heyra** to Applications.
-2. The first time, right-click Heyra and choose **Open**. It isn't notarized by Apple
-   yet, so macOS asks once.
+1. With [Homebrew](https://brew.sh):
+
+   ```sh
+   brew install --cask alcun/tap/heyra
+   ```
+
+   Or download `Heyra.zip` from [Releases](https://github.com/alcun/heyra-desktop/releases),
+   unzip it and move **Heyra** to Applications. It isn't notarized by Apple yet, so the
+   first time macOS blocks it: System Settings → Privacy & Security → **Open Anyway**.
+2. Open Heyra from Applications. It also opens at login from now on (Settings can turn
+   that off).
 3. Heyra opens on Home with a short setup list. It ticks each step off as you go:
    - the speech model downloads (about 490 MB, once)
    - allow the microphone
@@ -38,6 +45,7 @@ the dot, or use the menu bar, to open your history and settings.
   paste. The ✕ stops without pasting; the text is still kept in History.
 - **Long takes.** Talk for up to 30 minutes in one go; long takes are written a minute
   at a time, about 5 s of writing per minute of speech.
+- **Updates.** `brew upgrade --cask heyra`.
 - **Fast.** Six seconds of speech becomes text in about 0.4 s on an M-series Mac.
 - **Light.** About 2% of one CPU core at rest and 5% while you talk. The model stays
   loaded (about 1.3 GB of memory) so it's ready the moment you press fn.

@@ -4,11 +4,12 @@ set -e
 cd "$(dirname "$0")"
 cargo build --release
 APP="target/Heyra.app"
+VERSION=$(awk -F'"' '/^version/ {print $2; exit}' Cargo.toml)
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp target/release/heyra "$APP/Contents/MacOS/heyra"
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -17,7 +18,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleExecutable</key><string>heyra</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>
   <key>NSMicrophoneUsageDescription</key><string>Heyra listens while you hold the push-to-talk key, and turns speech into text on this Mac.</string>

@@ -4,6 +4,7 @@
 
 mod engine;
 mod hotkey;
+mod login;
 mod model;
 mod gpu_orb;
 mod paste;
@@ -327,6 +328,13 @@ fn main() {
         });
     }
 
+    // First run from the app bundle: open at login, which Settings can turn off.
+    let in_bundle = std::env::current_exe().is_ok_and(|p| p.to_string_lossy().contains(".app/Contents/MacOS"));
+    let settings = store::load_settings();
+    if in_bundle && !settings.login_offered {
+        login::set(true);
+        store::save_settings(&store::Settings { login_offered: true, ..settings });
+    }
     let app = Application::new();
     {
         // Clicking the Dock icon brings the main window back after it was closed.

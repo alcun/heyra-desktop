@@ -552,9 +552,35 @@ impl Main {
             .child(
                 section("PUSH TO TALK")
                     .child(div().text_sm().text_color(rgb(CREAM)).child("Hold fn, talk, let go."))
+                    .child(hint("Double-tap fn for hands-free; tap fn or ✓ to paste, ✕ to keep it in History only."))
                     .child(hint("A Teenage Engineering TING works too: its squeeze sends ctrl+opt+F12."))
                     .child(hint("If fn opens the emoji picker: System Settings → Keyboard → Press 🌐 key to → Do nothing.")),
             )
+            .child({
+                let on = crate::login::enabled();
+                section("START").child(
+                    div()
+                        .id("login")
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .py_2()
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            crate::login::set(!on);
+                            cx.notify();
+                        }))
+                        .child(
+                            div()
+                                .size(px(9.))
+                                .rounded_full()
+                                .border_1()
+                                .border_color(rgb(if on { GOLD } else { DIM }))
+                                .when(on, |d| d.bg(rgb(GOLD))),
+                        )
+                        .child(div().text_sm().text_color(rgb(CREAM)).child("Open Heyra at login")),
+                )
+            })
             .child(
                 section("SPEECH MODEL")
                     .child(div().text_sm().text_color(rgb(CREAM)).child("NVIDIA Parakeet TDT 0.6B v3, running on this Mac."))

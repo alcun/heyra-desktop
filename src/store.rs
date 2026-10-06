@@ -130,6 +130,9 @@ pub struct Settings {
     /// time). Off by default, so no audio is ever stored.
     #[serde(default)]
     pub keep_last_clip: bool,
+    /// Open at login was turned on once, on the first run; after that it's the user's switch.
+    #[serde(default)]
+    pub login_offered: bool,
 }
 
 pub fn save_clip(sample_rate: u32, samples: &[f32]) {
