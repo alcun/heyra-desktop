@@ -357,13 +357,15 @@ fn main() {
         let mut frame = 0u32;
         let clicked = std::rc::Rc::new(std::cell::Cell::new(false));
         let mut hotspot: Option<gpui::WindowHandle<ui::Hotspot>> = None;
+        let closed = std::rc::Rc::new(std::cell::Cell::new(false));
+        let mut close_x: Option<gpui::WindowHandle<ui::CloseX>> = None;
         cx.spawn(async move |cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(16)).await;
                 frame = frame.wrapping_add(1);
-                let (phase, level) = {
+                let (phase, level, hands_free) = {
                     let s = state.lock().unwrap();
-                    (s.phase, s.level)
+                    (s.phase, s.level, s.hands_free)
                 };
                 let ok = cx.update(|cx| {
                     // At rest, the pointer over the dot wakes it a little; a click opens Heyra.
@@ -383,6 +385,19 @@ fn main() {
                             hotspot = None;
                         }
                         _ => {}
+                    }
+                    match (&close_x, hands_free, orb.centre()) {
+                        (None, true, Some(centre)) => {
+                            close_x = ui::open_close_x(cx, centre, ui::CloseX { clicked: closed.clone() });
+                        }
+                        (Some(h), false, _) => {
+                            let _ = h.update(cx, |_, window, _| window.remove_window());
+                            close_x = None;
+                        }
+                        _ => {}
+                    }
+                    if closed.replace(false) {
+                        let _ = main_tx.send(Cmd::Discard);
                     }
                     let open_from_dot = clicked.replace(false);
                     let action = tray.as_ref().and_then(|t| t.poll()).or(open_from_dot.then_some(tray::Action::Open));

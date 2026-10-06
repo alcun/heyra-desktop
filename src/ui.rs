@@ -663,10 +663,15 @@ pub struct Hotspot {
 const HOTSPOT: f32 = 26.;
 
 pub fn open_hotspot(cx: &mut App, centre: (f64, f64), hotspot: Hotspot) -> Option<gpui::WindowHandle<Hotspot>> {
-    let origin = point(px(centre.0 as f32 - HOTSPOT / 2.), px(centre.1 as f32 - HOTSPOT / 2.));
+    open_popup(cx, centre, HOTSPOT, hotspot)
+}
+
+/// A small borderless, unfocused window centred on a point of the screen.
+fn open_popup<V: Render>(cx: &mut App, centre: (f64, f64), side: f32, view: V) -> Option<gpui::WindowHandle<V>> {
+    let origin = point(px(centre.0 as f32 - side / 2.), px(centre.1 as f32 - side / 2.));
     cx.open_window(
         WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds { origin, size: size(px(HOTSPOT), px(HOTSPOT)) })),
+            window_bounds: Some(WindowBounds::Windowed(Bounds { origin, size: size(px(side), px(side)) })),
             titlebar: None,
             focus: false,
             show: true,
@@ -677,12 +682,47 @@ pub fn open_hotspot(cx: &mut App, centre: (f64, f64), hotspot: Hotspot) -> Optio
             window_background: gpui::WindowBackgroundAppearance::Transparent,
             ..Default::default()
         },
-        |_, cx| cx.new(|_| hotspot),
+        |_, cx| cx.new(|_| view),
     )
     .ok()
     .inspect(|handle| {
         let _ = handle.update(cx, |_, window, _| no_shadow(window));
     })
+}
+
+/// The X at the orb's top right during a hands-free take: click to throw it away.
+pub struct CloseX {
+    pub clicked: Rc<Cell<bool>>,
+}
+
+const CLOSE_X: f32 = 22.;
+
+/// Where the X sits: just off the sphere's edge, up and to the right.
+pub fn open_close_x(cx: &mut App, centre: (f64, f64), close: CloseX) -> Option<gpui::WindowHandle<CloseX>> {
+    open_popup(cx, (centre.0 + 33., centre.1 - 33.), CLOSE_X, close)
+}
+
+impl Render for CloseX {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let clicked = self.clicked.clone();
+        div()
+            .id("close")
+            .size_full()
+            .rounded_full()
+            .bg(alpha(GROUND, 0.92))
+            .border_1()
+            .border_color(rgb(HAIR))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_color(rgb(CREAM))
+            .text_size(px(13.))
+            .font_family(MONO)
+            .cursor_pointer()
+            .hover(|d| d.text_color(rgb(GOLD)))
+            .child("×")
+            .on_click(move |_, _, _| clicked.set(true))
+    }
 }
 
 /// macOS draws a shadow around even a clear window; the dot's target must not have one.

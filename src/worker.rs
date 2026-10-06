@@ -34,6 +34,8 @@ pub struct State {
     pub checks: crate::setup::Checks,
     /// Something the user must fix before push-to-talk works (e.g. a permission).
     pub blocker: Option<String>,
+    /// A double-tap take is running; the orb shows an X to throw it away.
+    pub hands_free: bool,
 }
 
 pub type Shared = Arc<Mutex<State>>;
@@ -41,6 +43,8 @@ pub type Shared = Arc<Mutex<State>>;
 pub enum Cmd {
     Key(Key),
     SetMic(Option<String>),
+    /// The orb's X: drop the hands-free take without writing it.
+    Discard,
 }
 
 pub fn new_state() -> Shared {
@@ -56,6 +60,7 @@ pub fn new_state() -> Shared {
         progress: None,
         checks: crate::setup::check(),
         blocker: None,
+        hands_free: false,
     }))
 }
 
@@ -161,6 +166,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
         s.phase = Phase::Ready;
         s.message = "Hold fn and talk".into();
         s.level = 0.0;
+        s.hands_free = false;
     };
     ready(&state);
 
@@ -193,6 +199,12 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                 recorder.end();
                 ready(&state);
             }
+            Some(Cmd::Discard) if hands_free => {
+                recording = false;
+                hands_free = false;
+                recorder.end();
+                ready(&state);
+            }
             Some(Cmd::Key(Key::Down)) if hands_free => {
                 recording = false;
                 hands_free = false;
@@ -217,7 +229,9 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                 if pressed_at.elapsed() < TAP {
                     if last_tap.take().is_some_and(|t| t.elapsed() < DOUBLE_TAP) {
                         hands_free = true;
-                        state.lock().unwrap().message = "Hands-free: tap fn to stop".into();
+                        let mut s = state.lock().unwrap();
+                        s.hands_free = true;
+                        s.message = "Hands-free: tap fn to stop".into();
                     } else {
                         last_tap = Some(Instant::now());
                         recording = false;
