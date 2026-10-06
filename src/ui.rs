@@ -690,23 +690,24 @@ fn open_popup<V: Render>(cx: &mut App, centre: (f64, f64), side: f32, view: V) -
     })
 }
 
-/// The X at the orb's top right during a hands-free take: click to throw it away.
-pub struct CloseX {
+/// The X and the tick beside the orb during a hands-free take.
+pub struct OrbButton {
+    pub glyph: &'static str,
     pub clicked: Rc<Cell<bool>>,
 }
 
-const CLOSE_X: f32 = 22.;
+const ORB_BUTTON: f32 = 22.;
 
-/// Where the X sits: just off the sphere's edge, up and to the right.
-pub fn open_close_x(cx: &mut App, centre: (f64, f64), close: CloseX) -> Option<gpui::WindowHandle<CloseX>> {
-    open_popup(cx, (centre.0 + 33., centre.1 - 33.), CLOSE_X, close)
+/// Opens a button just off the sphere's upper edge: `side` -1 for left, 1 for right.
+pub fn open_orb_button(cx: &mut App, centre: (f64, f64), side: f64, button: OrbButton) -> Option<gpui::WindowHandle<OrbButton>> {
+    open_popup(cx, (centre.0 + 33. * side, centre.1 - 33.), ORB_BUTTON, button)
 }
 
-impl Render for CloseX {
+impl Render for OrbButton {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let clicked = self.clicked.clone();
         div()
-            .id("close")
+            .id(self.glyph)
             .size_full()
             .rounded_full()
             .bg(alpha(GROUND, 0.92))
@@ -716,11 +717,10 @@ impl Render for CloseX {
             .items_center()
             .justify_center()
             .text_color(rgb(CREAM))
-            .text_size(px(13.))
-            .font_family(MONO)
+            .text_size(px(12.))
             .cursor_pointer()
             .hover(|d| d.text_color(rgb(GOLD)))
-            .child("×")
+            .child(self.glyph)
             .on_click(move |_, _, _| clicked.set(true))
     }
 }

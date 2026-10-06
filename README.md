@@ -34,7 +34,8 @@ the dot, or use the menu bar, to open your history and settings.
   listening. Let go and the text is pasted in, and your clipboard text is put back.
   Pressing another key while holding fn (fn+arrow, fn+delete) cancels the take.
   A soft click marks the start and end of each take.
-- **Hands-free.** Double-tap fn to start, tap fn once to stop. Good for long dictation.
+- **Hands-free.** Double-tap fn to start, tap fn once (or the ✓ by the orb) to stop and
+  paste. The ✕ stops without pasting; the text is still kept in History.
 - **Long takes.** Talk for up to 30 minutes in one go; long takes are written a minute
   at a time, about 5 s of writing per minute of speech.
 - **Fast.** Six seconds of speech becomes text in about 0.4 s on an M-series Mac.

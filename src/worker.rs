@@ -34,7 +34,7 @@ pub struct State {
     pub checks: crate::setup::Checks,
     /// Something the user must fix before push-to-talk works (e.g. a permission).
     pub blocker: Option<String>,
-    /// A double-tap take is running; the orb shows an X to throw it away.
+    /// A double-tap take is running; the orb shows an X and a tick.
     pub hands_free: bool,
 }
 
@@ -43,8 +43,10 @@ pub type Shared = Arc<Mutex<State>>;
 pub enum Cmd {
     Key(Key),
     SetMic(Option<String>),
-    /// The orb's X: drop the hands-free take without writing it.
+    /// The orb's X: end the hands-free take and keep it in History, but don't paste it.
     Discard,
+    /// The orb's tick: end the hands-free take and paste it, as a tap of fn does.
+    Finish,
 }
 
 pub fn new_state() -> Shared {
@@ -93,8 +95,8 @@ const TAP: Duration = Duration::from_millis(300);
 /// Two taps this close together start hands-free.
 const DOUBLE_TAP: Duration = Duration::from_millis(500);
 
-/// Stop recording, then transcribe and paste the take.
-fn finish(state: &Shared, engine: &mut dyn Engine, recorder: &Recorder) {
+/// Stop recording, transcribe the take and keep it in History; paste it unless `paste` is off.
+fn finish(state: &Shared, engine: &mut dyn Engine, recorder: &Recorder, paste: bool) {
     let samples = recorder.end();
     let secs = samples.len() as f32 / recorder.sample_rate as f32;
     let peak = samples.iter().fold(0f32, |m, x| m.max(x.abs()));
@@ -118,9 +120,11 @@ fn finish(state: &Shared, engine: &mut dyn Engine, recorder: &Recorder) {
     let took = started.elapsed().as_secs_f32();
     store::log(&format!("transcribed in {took:.2}s, {} chars", text.len()));
     if !text.is_empty() {
-        match crate::paste::paste(&text) {
-            Ok(()) => store::log("pasted"),
-            Err(e) => store::log(&format!("paste failed: {e}")),
+        if paste {
+            match crate::paste::paste(&text) {
+                Ok(()) => store::log("pasted"),
+                Err(e) => store::log(&format!("paste failed: {e}")),
+            }
         }
         let entry = Entry { at: store::now(), text, secs, took };
         store::append_history(&entry);
@@ -188,7 +192,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                 recording = false;
                 ignore_up = !hands_free;
                 hands_free = false;
-                finish(&state, engine.as_mut(), &recorder);
+                finish(&state, engine.as_mut(), &recorder, true);
                 ready(&state);
                 continue;
             }
@@ -199,17 +203,17 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                 recorder.end();
                 ready(&state);
             }
-            Some(Cmd::Discard) if hands_free => {
+            Some(cmd @ (Cmd::Discard | Cmd::Finish)) if hands_free => {
                 recording = false;
                 hands_free = false;
-                recorder.end();
+                finish(&state, engine.as_mut(), &recorder, matches!(cmd, Cmd::Finish));
                 ready(&state);
             }
             Some(Cmd::Key(Key::Down)) if hands_free => {
                 recording = false;
                 hands_free = false;
                 ignore_up = true;
-                finish(&state, engine.as_mut(), &recorder);
+                finish(&state, engine.as_mut(), &recorder, true);
                 ready(&state);
             }
             Some(Cmd::Key(Key::Down)) if !recording => {
@@ -241,7 +245,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                     continue;
                 }
                 recording = false;
-                finish(&state, engine.as_mut(), &recorder);
+                finish(&state, engine.as_mut(), &recorder, true);
                 ready(&state);
             }
             Some(Cmd::SetMic(name)) if !recording => {

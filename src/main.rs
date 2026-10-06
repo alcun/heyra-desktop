@@ -357,8 +357,10 @@ fn main() {
         let mut frame = 0u32;
         let clicked = std::rc::Rc::new(std::cell::Cell::new(false));
         let mut hotspot: Option<gpui::WindowHandle<ui::Hotspot>> = None;
-        let closed = std::rc::Rc::new(std::cell::Cell::new(false));
-        let mut close_x: Option<gpui::WindowHandle<ui::CloseX>> = None;
+        // The X and the tick shown beside the orb during a hands-free take.
+        let buttons: [(&'static str, f64, fn() -> Cmd); 2] = [("✕", -1.0, || Cmd::Discard), ("✓", 1.0, || Cmd::Finish)];
+        let pressed = [std::rc::Rc::new(std::cell::Cell::new(false)), std::rc::Rc::new(std::cell::Cell::new(false))];
+        let mut button_windows: Vec<gpui::WindowHandle<ui::OrbButton>> = Vec::new();
         cx.spawn(async move |cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(16)).await;
@@ -386,18 +388,24 @@ fn main() {
                         }
                         _ => {}
                     }
-                    match (&close_x, hands_free, orb.centre()) {
-                        (None, true, Some(centre)) => {
-                            close_x = ui::open_close_x(cx, centre, ui::CloseX { clicked: closed.clone() });
+                    match (button_windows.is_empty(), hands_free, orb.centre()) {
+                        (true, true, Some(centre)) => {
+                            for ((glyph, side, _), clicked) in buttons.iter().zip(&pressed) {
+                                let button = ui::OrbButton { glyph, clicked: clicked.clone() };
+                                button_windows.extend(ui::open_orb_button(cx, centre, *side, button));
+                            }
                         }
-                        (Some(h), false, _) => {
-                            let _ = h.update(cx, |_, window, _| window.remove_window());
-                            close_x = None;
+                        (false, false, _) => {
+                            for h in button_windows.drain(..) {
+                                let _ = h.update(cx, |_, window, _| window.remove_window());
+                            }
                         }
                         _ => {}
                     }
-                    if closed.replace(false) {
-                        let _ = main_tx.send(Cmd::Discard);
+                    for ((_, _, cmd), clicked) in buttons.iter().zip(&pressed) {
+                        if clicked.replace(false) {
+                            let _ = main_tx.send(cmd());
+                        }
                     }
                     let open_from_dot = clicked.replace(false);
                     let action = tray.as_ref().and_then(|t| t.poll()).or(open_from_dot.then_some(tray::Action::Open));
