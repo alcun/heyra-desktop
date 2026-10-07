@@ -12,7 +12,7 @@ TAP=../homebrew-tap/Casks/heyra.rb
 HEYRA_SIGN="${HEYRA_SIGN:-Developer ID Application}" ./bundle.sh
 OUT=$(mktemp -d)
 ditto -c -k --keepParent target/Heyra.app "$OUT/Heyra.zip"
-# Notarize once the credentials are saved; until then the cask lifts the quarantine.
+# Notarize; without saved credentials, stop (HEYRA_UNNOTARIZED=1 publishes anyway).
 if xcrun notarytool history --keychain-profile heyra >/dev/null 2>&1; then
   xcrun notarytool submit "$OUT/Heyra.zip" --keychain-profile heyra --wait | tee "$OUT/notary.txt"
   grep -q "status: Accepted" "$OUT/notary.txt" || { echo "Apple didn't accept it; nothing published"; exit 1; }
@@ -20,8 +20,12 @@ if xcrun notarytool history --keychain-profile heyra >/dev/null 2>&1; then
   rm "$OUT/Heyra.zip"
   ditto -c -k --keepParent target/Heyra.app "$OUT/Heyra.zip"
   spctl --assess --type execute -v target/Heyra.app
+elif [[ -n "$HEYRA_UNNOTARIZED" ]]; then
+  echo "Not notarized (HEYRA_UNNOTARIZED is set)"
 else
-  echo "Not notarized: no notarytool credentials saved as \"heyra\""
+  echo "No notarytool credentials saved as \"heyra\"; nothing published."
+  echo "Save them: xcrun notarytool store-credentials heyra --apple-id al@alcun.dev --team-id UJA9WA62AT"
+  exit 1
 fi
 
 git tag "v$VERSION"
