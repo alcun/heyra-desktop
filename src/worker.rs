@@ -117,6 +117,9 @@ const TAP: Duration = Duration::from_millis(300);
 /// Two taps this close together start hands-free.
 const DOUBLE_TAP: Duration = Duration::from_millis(500);
 
+/// The Settings switch for keeping the microphone open between takes.
+pub static KEEP_MIC_READY: AtomicBool = AtomicBool::new(true);
+
 /// The Settings switch for muting the Mac while a take records.
 pub static MUTE_WHILE_TALKING: AtomicBool = AtomicBool::new(false);
 
@@ -166,10 +169,21 @@ fn finish(state: &Shared, engine: &mut dyn Engine, recorder: &Recorder, paste: b
     let started = Instant::now();
     let raw = crate::engine::transcribe_long(engine, recorder.sample_rate, &samples);
     let text = store::apply_dictionary(&raw, &store::load_dictionary());
+    if store::is_scratch_that(&text) {
+        store::log("scratch that");
+        if paste {
+            let _ = crate::paste::tap(crate::paste::Z, true);
+        }
+        return;
+    }
     let (text, enter) = match store::press_enter(&text) {
         Some(before) => (before, paste),
         None => (text, false),
     };
+    let mut text = store::line_breaks(&text);
+    if paste && crate::paste::in_terminal() {
+        text = store::drop_full_stop(&text);
+    }
     let took = started.elapsed().as_secs_f32();
     store::log(&format!("transcribed in {took:.2}s, {} chars", text.len()));
     if text.is_empty() && !enter {
@@ -261,6 +275,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
     let mut queue: Vec<Cmd> = Vec::new();
     let mut mute = Mute::default();
     MUTE_WHILE_TALKING.store(store::load_settings().mute_while_talking, Ordering::Relaxed);
+    KEEP_MIC_READY.store(store::load_settings().keep_mic_ready, Ordering::Relaxed);
     // Microphones come and go: a new one is switched to, as other dictation apps do.
     let mut known: Vec<String> = state.lock().unwrap().devices.iter().map(|m| m.name.clone()).collect();
     let mut scanned = Instant::now();
@@ -354,6 +369,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                 ready(&state);
             }
             Cmd::Key(Key::Down) if !recording => {
+                recorder.set_live(true);
                 recording = true;
                 pressed_at = Instant::now();
                 recorder.begin();
@@ -415,5 +431,13 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
             mute.restore();
         }
         crate::hotkey::set_taking(recording);
+        // Between takes the mic can rest, so macOS's mic light goes out. A plugged-in
+        // mic stays open: an FX mic's squeeze is only heard while it's listening.
+        let plugged_in = {
+            let s = state.lock().unwrap();
+            s.ting_heard
+                || s.devices.iter().any(|m| m.name == recorder.device_name && m.kind == crate::mics::Kind::Wired)
+        };
+        recorder.set_live(recording || plugged_in || KEEP_MIC_READY.load(Ordering::Relaxed));
     }
 }

@@ -94,6 +94,56 @@ pub fn load_dictionary() -> Vec<(String, String)> {
 }
 
 /// Case-insensitive replace of whole phrases.
+/// The take is just "scratch that": undo the last one.
+pub fn is_scratch_that(text: &str) -> bool {
+    text.trim_matches(|c: char| c.is_whitespace() || ".,!?".contains(c)).eq_ignore_ascii_case("scratch that")
+}
+
+/// "new line" and "new paragraph" said anywhere become line breaks; the next word
+/// starts with a capital, and commas or spaces around the words go.
+pub fn line_breaks(text: &str) -> String {
+    let lower = text.to_ascii_lowercase(); // same byte positions as `text`
+    let word_edge = |c: Option<char>| c.is_none_or(|c| !c.is_alphanumeric());
+    let mut out = String::new();
+    let mut capital = false;
+    let mut i = 0;
+    while i < text.len() {
+        let before = text[..i].chars().last();
+        let hit = [("new paragraph", "\n\n"), ("new line", "\n")].into_iter().find(|(said, _)| {
+            lower[i..].starts_with(said) && word_edge(before) && word_edge(text[i + said.len()..].chars().next())
+        });
+        if let Some((said, brk)) = hit {
+            while out.ends_with([' ', ',', ';', ':']) {
+                out.pop();
+            }
+            out.push_str(brk);
+            i += said.len();
+            while text[i..].starts_with([' ', ',', ';', ':', '.']) {
+                i += 1;
+            }
+            capital = true;
+            continue;
+        }
+        let c = text[i..].chars().next().unwrap();
+        if capital && c.is_alphabetic() {
+            out.extend(c.to_uppercase());
+        } else {
+            out.push(c);
+        }
+        capital &= !c.is_alphabetic();
+        i += c.len_utf8();
+    }
+    out
+}
+
+/// Commands and prompts don't end in a full stop: drop one (but not "...").
+pub fn drop_full_stop(text: &str) -> String {
+    match text.strip_suffix('.') {
+        Some(rest) if !rest.ends_with('.') => rest.to_string(),
+        _ => text.to_string(),
+    }
+}
+
 /// A take ending in "press enter" is the words before it, then Enter.
 pub fn press_enter(text: &str) -> Option<String> {
     let trimmed = text.trim_end_matches(|c: char| c.is_whitespace() || ".,!?;:".contains(c));
@@ -159,6 +209,10 @@ pub struct Settings {
     /// The welcome window has been shown.
     #[serde(default)]
     pub onboarded: bool,
+    /// Keep the microphone open between takes: instant, and the first word is caught.
+    /// Off, it opens only while recording, so macOS's mic light goes out.
+    #[serde(default = "yes")]
+    pub keep_mic_ready: bool,
 }
 
 fn yes() -> bool {
@@ -167,7 +221,7 @@ fn yes() -> bool {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { mic: None, keep_last_clip: false, login_offered: false, button: None, sounds: true, mute_while_talking: false, onboarded: false }
+        Self { mic: None, keep_last_clip: false, login_offered: false, button: None, sounds: true, mute_while_talking: false, onboarded: false, keep_mic_ready: true }
     }
 }
 
@@ -211,7 +265,18 @@ pub fn save_settings(settings: &Settings) {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_dictionary, press_enter};
+    use super::{apply_dictionary, drop_full_stop, is_scratch_that, line_breaks, press_enter};
+
+    #[test]
+    fn voice_commands() {
+        assert!(is_scratch_that("Scratch that."));
+        assert!(!is_scratch_that("Scratch that idea, try another."));
+        assert_eq!(line_breaks("Fix the bug new line then run the tests."), "Fix the bug\nThen run the tests.");
+        assert_eq!(line_breaks("Dear Sam. New paragraph. Thanks for this."), "Dear Sam.\n\nThanks for this.");
+        assert_eq!(line_breaks("A newline character"), "A newline character");
+        assert_eq!(drop_full_stop("run the tests."), "run the tests");
+        assert_eq!(drop_full_stop("wait..."), "wait...");
+    }
 
     #[test]
     fn press_enter_at_the_end() {

@@ -10,7 +10,9 @@ use cpal::{FromSample, SampleFormat};
 const PRE_ROLL_SECS: f32 = 0.3;
 
 pub struct Recorder {
-    _stream: cpal::Stream,
+    stream: cpal::Stream,
+    /// The stream is running (not paused between takes).
+    live: AtomicBool,
     shared: Arc<Shared>,
     pub sample_rate: u32,
     pub device_name: String,
@@ -66,12 +68,31 @@ impl Recorder {
             other => return Err(format!("unsupported sample format {other}")),
         }?;
         stream.play().map_err(|e| format!("start microphone: {e}"))?;
-        Ok(Self { _stream: stream, shared, sample_rate, device_name })
+        Ok(Self { stream, live: AtomicBool::new(true), shared, sample_rate, device_name })
     }
 
     /// 0..1, roughly how loud the microphone is right now.
     pub fn level(&self) -> f32 {
+        if !self.live.load(Ordering::Relaxed) {
+            return 0.0;
+        }
         f32::from_bits(self.shared.level.load(Ordering::Relaxed))
+    }
+
+    /// Run or pause the microphone. Paused, macOS's mic light goes out; on waking,
+    /// the old audio is dropped so a take doesn't start with a stale moment.
+    pub fn set_live(&self, on: bool) {
+        if self.live.swap(on, Ordering::Relaxed) == on {
+            return;
+        }
+        if on {
+            self.shared.buffer.lock().unwrap().clear();
+            if let Err(e) = self.stream.play() {
+                crate::store::log(&format!("microphone wake: {e}"));
+            }
+        } else if let Err(e) = self.stream.pause() {
+            crate::store::log(&format!("microphone rest: {e}"));
+        }
     }
 
     pub fn begin(&self) {

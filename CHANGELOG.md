@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.9
+
+- Voice commands: "scratch that" undoes the last take; "new line" and "new paragraph" break
+  the text. In a terminal (Terminal, iTerm, Ghostty, Warp and others) a take doesn't end in
+  a full stop.
+- Paste last take, from the menu bar.
+- Settings → Keep the mic ready. Off, the mic opens only while you talk, so the orange mic
+  light goes out. Plugged-in mics, like the FX mic, always stay ready.
+
 ## 0.3.8
 
 - Notarized by Apple, so it opens without a warning.

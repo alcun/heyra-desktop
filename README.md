@@ -49,7 +49,9 @@ the dot, or use the menu bar, to open your history and settings.
   listening. Let go and the text is pasted in, and your clipboard text is put back.
   Pressing another key while holding fn (fn+arrow, fn+delete), or Esc, cancels the take.
   A soft click marks the start and end of each take (Settings can turn it off).
-- **"Press enter".** End a take with "press enter" and Heyra presses it after pasting.
+- **Voice commands.** End a take with "press enter" and Heyra presses it after pasting.
+  "New line" and "new paragraph" break the text; a take of just "scratch that" undoes the
+  last one. In a terminal, takes don't end in a full stop.
 - **Any button.** Settings → Another button: any key, key combo or extra mouse button
   also works as push-to-talk, alongside fn.
 - **Hands-free.** Double-tap fn to start, tap fn once (or the ✓ by the orb) to stop and

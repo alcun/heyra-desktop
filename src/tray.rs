@@ -6,11 +6,13 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 pub struct Tray {
     _icon: TrayIcon,
     open: MenuItem,
+    paste_last: MenuItem,
     quit: MenuItem,
 }
 
 pub enum Action {
     Open,
+    PasteLast,
     Quit,
 }
 
@@ -41,22 +43,25 @@ fn mark() -> Icon {
 impl Tray {
     pub fn new() -> Option<Self> {
         let open = MenuItem::new("Open Heyra", true, None);
+        let paste_last = MenuItem::new("Paste last take", true, None);
         let quit = MenuItem::new("Quit Heyra", true, None);
         let menu = Menu::new();
-        menu.append_items(&[&open, &PredefinedMenuItem::separator(), &quit]).ok()?;
+        menu.append_items(&[&open, &paste_last, &PredefinedMenuItem::separator(), &quit]).ok()?;
         let icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_icon_templated(mark())
             .with_tooltip("Heyra: hold fn and talk")
             .build()
             .ok()?;
-        Some(Self { _icon: icon, open, quit })
+        Some(Self { _icon: icon, open, paste_last, quit })
     }
 
     pub fn poll(&self) -> Option<Action> {
         let event = MenuEvent::receiver().try_recv().ok()?;
         if event.id == *self.open.id() {
             Some(Action::Open)
+        } else if event.id == *self.paste_last.id() {
+            Some(Action::PasteLast)
         } else if event.id == *self.quit.id() {
             Some(Action::Quit)
         } else {

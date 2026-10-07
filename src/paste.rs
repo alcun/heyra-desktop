@@ -1,5 +1,6 @@
 //! Put text into whatever text box has focus: clipboard, a real cmd+V, then
 //! the old clipboard back.
+#![allow(unexpected_cfgs)] // objc 0.2's macros check a cfg this crate doesn't declare
 
 use std::thread::sleep;
 use std::time::Duration;
@@ -53,4 +54,37 @@ pub fn paste(text: &str) -> Result<(), String> {
         let _ = clipboard.set_text(previous);
     }
     Ok(())
+}
+
+/// Terminals, where a take is usually a command or a prompt to a coding agent.
+const TERMINALS: [&str; 9] = [
+    "com.apple.Terminal",
+    "com.googlecode.iterm2",
+    "com.mitchellh.ghostty",
+    "dev.warp.Warp-Stable",
+    "net.kovidgoyal.kitty",
+    "org.alacritty",
+    "com.github.wez.wezterm",
+    "co.zeit.hyper",
+    "com.stablyai.orca",
+];
+
+/// Is the app the text is about to go into a terminal?
+pub fn in_terminal() -> bool {
+    use cocoa::base::{id, nil};
+    use objc::{class, msg_send, sel, sel_impl};
+    unsafe {
+        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let app: id = msg_send![workspace, frontmostApplication];
+        if app == nil {
+            return false;
+        }
+        let bundle: id = msg_send![app, bundleIdentifier];
+        if bundle == nil {
+            return false;
+        }
+        let utf8: *const std::ffi::c_char = msg_send![bundle, UTF8String];
+        let name = std::ffi::CStr::from_ptr(utf8).to_string_lossy();
+        TERMINALS.contains(&name.as_ref())
+    }
 }

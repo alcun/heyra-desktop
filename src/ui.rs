@@ -16,7 +16,7 @@ use gpui::{
 
 use crate::setup::{self, Mic};
 use crate::store;
-use crate::worker::{Cmd, MUTE_WHILE_TALKING, Phase, Shared};
+use crate::worker::{Cmd, KEEP_MIC_READY, MUTE_WHILE_TALKING, Phase, Shared};
 use std::sync::atomic::Ordering;
 
 // ---- tokens ----
@@ -611,7 +611,12 @@ impl Main {
             .child(
                 section("MICROPHONE")
                     .child(div().flex().flex_col().children(rows))
-                    .child(hint("Plug in a mic and Heyra switches to it.")),
+                    .child(hint("Plug in a mic and Heyra switches to it."))
+                    .child(switch("ready", "Keep the mic ready", KEEP_MIC_READY.load(Ordering::Relaxed), |on| {
+                        KEEP_MIC_READY.store(on, Ordering::Relaxed);
+                        store::save_settings(&store::Settings { keep_mic_ready: on, ..store::load_settings() });
+                    }))
+                    .child(hint("Off: the mic opens only while you talk, so the orange mic light goes out, but the first moment can be missed. Plugged-in mics, like the FX mic, always stay ready.")),
             )
             .child(
                 section("PUSH TO TALK")

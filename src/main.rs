@@ -466,6 +466,16 @@ fn main() {
                             }
                             cx.activate(true);
                         }
+                        Some(tray::Action::PasteLast) => {
+                            let last = main_state.lock().unwrap().history.last().map(|e| e.text.clone());
+                            if let Some(text) = last {
+                                // Once the menu has closed and the app you were in has focus again.
+                                std::thread::spawn(move || {
+                                    std::thread::sleep(Duration::from_millis(250));
+                                    let _ = paste::paste(&text);
+                                });
+                            }
+                        }
                         Some(tray::Action::Quit) => cx.quit(),
                         None => {}
                     }
