@@ -14,7 +14,8 @@ OUT=$(mktemp -d)
 ditto -c -k --keepParent target/Heyra.app "$OUT/Heyra.zip"
 # Notarize once the credentials are saved; until then the cask lifts the quarantine.
 if xcrun notarytool history --keychain-profile heyra >/dev/null 2>&1; then
-  xcrun notarytool submit "$OUT/Heyra.zip" --keychain-profile heyra --wait
+  xcrun notarytool submit "$OUT/Heyra.zip" --keychain-profile heyra --wait | tee "$OUT/notary.txt"
+  grep -q "status: Accepted" "$OUT/notary.txt" || { echo "Apple didn't accept it; nothing published"; exit 1; }
   xcrun stapler staple target/Heyra.app
   rm "$OUT/Heyra.zip"
   ditto -c -k --keepParent target/Heyra.app "$OUT/Heyra.zip"

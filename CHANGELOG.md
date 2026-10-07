@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.8
+
+- Notarized by Apple, so it opens without a warning.
+
 ## 0.3.7
 
 - Welcome: the last step is two, "You're ready" and "Everything stays here".
