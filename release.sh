@@ -23,7 +23,7 @@ if xcrun notarytool history --keychain-profile heyra >/dev/null 2>&1; then
 elif [[ -n "$HEYRA_UNNOTARIZED" ]]; then
   echo "Not notarized (HEYRA_UNNOTARIZED is set)"
 else
-  echo "No notarytool credentials saved as \"heyra\"; nothing published."
+  echo "Can't reach the \"heyra\" notarytool credentials (Mac locked? unlock and rerun); nothing published."
   echo "Save them: xcrun notarytool store-credentials heyra --apple-id al@alcun.dev --team-id UJA9WA62AT"
   exit 1
 fi
