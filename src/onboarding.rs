@@ -45,6 +45,7 @@ pub struct Onboarding {
 }
 
 pub fn open(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
+    cx.activate(true); // before the window: see ui::open_main
     let bounds = Bounds::centered(None, size(px(460.), px(580.)), cx);
     cx.open_window(
         WindowOptions {
@@ -72,7 +73,6 @@ pub fn open(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
         },
     )
     .ok();
-    cx.activate(true);
 }
 
 impl Onboarding {

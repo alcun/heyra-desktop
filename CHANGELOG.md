@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.10
+
+- Fixed a freeze: clicking the dot while another app was active could lock Heyra up.
+
 ## 0.3.9
 
 - Voice commands: "scratch that" undoes the last take; "new line" and "new paragraph" break

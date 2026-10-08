@@ -175,6 +175,9 @@ pub struct Main {
 }
 
 pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
+    // Be the active app before the window opens. Opened while another app is active (a
+    // click on the dot doesn't activate Heyra), GPUI's window-focus handler deadlocks.
+    cx.activate(true);
     let bounds = Bounds::centered(None, size(px(780.), px(540.)), cx);
     cx.open_window(
         WindowOptions {
