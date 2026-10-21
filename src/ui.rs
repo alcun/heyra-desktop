@@ -16,6 +16,9 @@ use gpui::{
 
 use crate::setup::{self, Mic};
 use crate::model::{self, Choice};
+
+/// Folder picks so far: a check that finishes after a later pick is ignored.
+static FOLDER_PICKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 use crate::store;
 use crate::worker::{Cmd, KEEP_MIC_READY, MUTE_WHILE_TALKING, Phase, Shared};
 use std::sync::atomic::Ordering;
@@ -821,11 +824,19 @@ impl Main {
                 let Ok(Ok(Some(paths))) = paths.await else { return };
                 let Some(dir) = paths.into_iter().next() else { return };
                 // Loading the model to check it takes a moment: not on the window's thread.
-                std::thread::spawn(move || match model::check_folder(&dir) {
-                    Ok(()) => {
-                        let _ = cmds.send(Cmd::UseModel(Choice::Folder(dir)));
+                // Only the most recent pick counts, whichever check finishes first.
+                let ticket = FOLDER_PICKS.fetch_add(1, Ordering::Relaxed) + 1;
+                std::thread::spawn(move || {
+                    let checked = model::check_folder(&dir);
+                    if FOLDER_PICKS.load(Ordering::Relaxed) != ticket {
+                        return;
                     }
-                    Err(e) => state.lock().unwrap().model_error = Some((Choice::Folder(dir), e)),
+                    match checked {
+                        Ok(()) => {
+                            let _ = cmds.send(Cmd::UseModel(Choice::Folder(dir)));
+                        }
+                        Err(e) => state.lock().unwrap().model_error = Some((Choice::Folder(dir), e)),
+                    }
                 });
             })
             .detach();

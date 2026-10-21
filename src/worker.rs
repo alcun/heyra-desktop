@@ -322,6 +322,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                         let mut s = state.lock().unwrap();
                         s.model = choice.clone();
                         s.progress = None;
+                        s.retry = None;
                         s.model_error = None;
                         s.phase = Phase::Loading;
                     }
@@ -507,6 +508,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                 let mut s = state.lock().unwrap();
                 s.model_error = None;
                 s.progress = None;
+                s.retry = None;
                 s.switching = None;
                 if choice != s.model {
                     store::log(&format!("switching model to {}", choice.name()));
@@ -546,6 +548,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
             let mut s = state.lock().unwrap();
             s.switching = None;
             s.progress = None;
+            s.retry = None;
             match result {
                 Ok(new) => {
                     engine = new;

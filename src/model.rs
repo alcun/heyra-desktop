@@ -130,18 +130,37 @@ impl Choice {
 pub fn check_folder(dir: &Path) -> Result<(), String> {
     files(dir)?;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let out = std::process::Command::new(exe)
+    let mut child = std::process::Command::new(exe)
         .arg("--check-model")
         .arg(dir)
         .stdin(std::process::Stdio::null())
-        .output()
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|e| e.to_string())?;
-    if out.status.success() {
+    // A model that hangs while loading is as unusable as one that crashes.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+            break status;
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("That model took too long to load.".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    if status.success() {
         return Ok(());
     }
-    let said = String::from_utf8_lossy(&out.stderr).lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").to_string();
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        let _ = pipe.read_to_string(&mut stderr);
+    }
+    let said = stderr.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").to_string();
     crate::store::log(&format!("model folder {} failed its check: {said}", dir.display()));
-    Err(if out.status.code() == Some(2) {
+    Err(if status.code() == Some(2) {
         format!("That model didn't load: {said}")
     } else {
         "That model uses something Heyra's engine can't run.".into()
@@ -342,6 +361,9 @@ impl Failure {
     }
 }
 
+/// No data for this long counts as a dropped connection.
+const STALL: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Seconds to wait before each automatic retry.
 const RETRY_WAITS: [u64; 5] = [2, 5, 10, 20, 30];
 
@@ -357,19 +379,28 @@ pub fn find(choice: &Choice) -> Option<PathBuf> {
 }
 
 /// Partial downloads of models no longer on the list (or of an older archive), and
-/// unpacking folders left by a run that quit midway. Current models' partials stay, to resume.
+/// unpacking folders left by a run that quit midway. Current models' partials stay, to
+/// resume. Nothing another Heyra still holds is touched: a partial only goes if it can be
+/// locked, an unpacking folder only if the process that made it has gone.
 fn clear_leftovers(dir: &Path) {
     let keep: Vec<String> = ALL.iter().map(|m| format!("{}.{}.partial", m.dir, &m.sha256[..12])).collect();
-    let mine = format!(".unpacking-{}-", std::process::id());
-    let own = format!(".{}-", std::process::id());
+    let alive = |name: &str| {
+        // `.unpacking-<pid>-<n>` or `<model>.<pid>-<n>.partial`
+        let pid = name.trim_start_matches(".unpacking-").rsplit('.').find_map(|part| part.split('-').next()?.parse::<i32>().ok());
+        pid.is_some_and(|pid| unsafe { libc::kill(pid, 0) } == 0)
+    };
     for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let stale = (name.ends_with(".partial") && !keep.contains(&name) && !name.contains(&own))
-            || name.ends_with(".tar.bz2.part")
-            || (name.starts_with(".unpacking-") && !name.starts_with(&mine));
-        if stale {
-            let path = entry.path();
-            let _ = if path.is_dir() { fs::remove_dir_all(&path) } else { fs::remove_file(&path) };
+        let path = entry.path();
+        if name.starts_with(".unpacking-") {
+            if !alive(&name) {
+                let _ = fs::remove_dir_all(&path);
+            }
+        } else if (name.ends_with(".partial") && !keep.contains(&name)) || name.ends_with(".tar.bz2.part") {
+            let free = fs::OpenOptions::new().write(true).open(&path).is_ok_and(|f| f.try_lock().is_ok());
+            if free {
+                let _ = fs::remove_file(&path);
+            }
         }
     }
 }
@@ -451,18 +482,42 @@ fn fetch(url: &str, file: &fs::File, cancel: &AtomicBool, on: &impl Fn(Progress)
         out.set_len(0).and_then(|()| out.seek(SeekFrom::Start(0)).map(|_| ())).map_err(|e| Failure::Other(e.to_string()))?;
     }
     let total = done + response.body().content_length().unwrap_or(0);
+    // Reads happen on a helper thread, so a cancel is heard at once and a connection that
+    // goes quiet for STALL is given up on, instead of waiting on a read that may never end.
     let mut reader = response.into_body().into_reader();
-    let mut buf = vec![0u8; 1 << 16];
+    let (tx, rx) = std::sync::mpsc::sync_channel::<std::io::Result<Vec<u8>>>(8);
+    std::thread::spawn(move || {
+        let mut buf = vec![0u8; 1 << 16];
+        loop {
+            let read = reader.read(&mut buf).map(|n| buf[..n].to_vec());
+            let end = !matches!(&read, Ok(chunk) if !chunk.is_empty());
+            if tx.send(read).is_err() || end {
+                break;
+            }
+        }
+    });
+    let mut heard = std::time::Instant::now();
     loop {
         if cancel.load(Ordering::Relaxed) {
             return Err(Failure::Cancelled);
         }
-        let n = reader.read(&mut buf).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::StorageFull { Failure::NoSpace(0) } else { Failure::Network("The connection dropped.".into()) }
-        })?;
+        let chunk = match rx.recv_timeout(std::time::Duration::from_millis(100)) {
+            Ok(Ok(chunk)) => chunk,
+            Ok(Err(e)) if e.kind() == std::io::ErrorKind::StorageFull => return Err(Failure::NoSpace(0)),
+            Ok(Err(_)) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(Failure::Network("The connection dropped.".into()));
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) if heard.elapsed() > STALL => {
+                return Err(Failure::Network("The connection stalled.".into()));
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+        };
+        heard = std::time::Instant::now();
+        let n = chunk.len();
         if n == 0 {
             break;
         }
+        let buf = chunk;
         out.write_all(&buf[..n]).map_err(|e| {
             if e.kind() == std::io::ErrorKind::StorageFull { Failure::NoSpace(0) } else { Failure::Other(e.to_string()) }
         })?;
@@ -542,6 +597,29 @@ mod tests {
             }, &quick)
             .unwrap_err();
         assert_eq!(err, super::Failure::Cancelled);
+
+        // A server that goes quiet: a cancel is heard at once, not after a read times out.
+        let cancel = AtomicBool::new(false);
+        let started = std::time::Instant::now();
+        let err = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                cancel.store(true, Ordering::Relaxed);
+            });
+            model.download_from(&[&url("stall")], &dir, &cancel, |_| {}, &quick).unwrap_err()
+        });
+        assert_eq!(err, super::Failure::Cancelled);
+        assert!(started.elapsed() < std::time::Duration::from_secs(4), "took {:?}", started.elapsed());
+
+        // Cleanup leaves a partial alone while something holds it.
+        let held = dir.join("old-model.abcdef123456.partial");
+        let file = std::fs::File::create(&held).unwrap();
+        file.lock().unwrap();
+        super::clear_leftovers(&dir);
+        assert!(held.exists(), "a held partial was removed");
+        drop(file);
+        super::clear_leftovers(&dir);
+        assert!(!held.exists(), "a free stale partial was kept");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
