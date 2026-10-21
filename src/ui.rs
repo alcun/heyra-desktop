@@ -708,10 +708,12 @@ impl Main {
     /// The speech models: Heyra's list, then a folder of your own. Clicking one
     /// downloads it if needed and switches; the current one works until then.
     fn models(&self, cx: &mut Context<Self>) -> Div {
-        let (in_use, switching, progress, error) = {
+        let (in_use, switching, progress, error, phase) = {
             let s = self.state.lock().unwrap();
-            (s.model.clone(), s.switching.clone(), s.progress, s.model_error.clone())
+            (s.model.clone(), s.switching.clone(), s.progress, s.model_error.clone(), s.phase)
         };
+        // The first load failed (offline, say): clicking the model tries again.
+        let failed = phase == Phase::Error && error.is_some();
         let row = |id: (&'static str, usize), name: String, note: String, selected: bool| {
             div()
                 .id(id)
@@ -747,7 +749,11 @@ impl Main {
             let using = in_use == choice;
             let loading = switching.as_ref() == Some(&choice);
             let here = m.find().is_some();
-            let (status, color) = if using {
+            let (status, color) = if using && failed {
+                ("TRY AGAIN".to_string(), REC)
+            } else if using && phase == Phase::Loading {
+                (progress.map_or("LOADING".into(), |p| format!("DOWNLOADING {}%", (p * 100.) as u32)), GOLD)
+            } else if using {
                 ("IN USE".to_string(), GOLD)
             } else if loading {
                 (progress.map_or("LOADING".into(), |p| format!("DOWNLOADING {}%", (p * 100.) as u32)), GOLD)

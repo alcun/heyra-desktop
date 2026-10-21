@@ -96,8 +96,12 @@ impl Loader {
                     (Some(dir), _) => dir,
                     (None, Choice::Listed(id)) => {
                         let model = crate::model::by_id(id).ok_or("that model isn't on the list")?;
-                        let progress_state = state.clone();
+                        let (progress_state, progress_cancel) = (state.clone(), cancel.clone());
                         let got = model.download(&cancel, move |done, total| {
+                            // A download that was replaced says nothing more.
+                            if progress_cancel.load(Ordering::Relaxed) {
+                                return;
+                            }
                             let mut s = progress_state.lock().unwrap();
                             let mb = |b: u64| b / 1_000_000;
                             s.progress = (total > 0).then(|| done as f32 / total as f32);
@@ -285,21 +289,26 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
     // The model downloads and loads on its own thread, so the microphone can open
     // (and the welcome window's orb follow your voice) as soon as it's allowed.
     // The welcome window can change the model while it downloads.
-    let mut loader = Loader::start(&state, state.lock().unwrap().model.clone());
+    // If it fails (offline, say), choosing a model again in Settings retries.
+    let mut loader = Some(Loader::start(&state, state.lock().unwrap().model.clone()));
     let mut queue: Vec<Cmd> = Vec::new();
     let mut recorder: Option<Recorder> = None;
-    while recorder.is_none() || !loader.handle.is_finished() {
+    let mut engine = loop {
         while let Ok(cmd) = cmds.try_recv() {
             match cmd {
-                Cmd::UseModel(choice) if choice != loader.choice => {
+                Cmd::UseModel(choice) if loader.as_ref().is_none_or(|l| l.choice != choice) => {
                     store::log(&format!("model chosen: {}", choice.name()));
                     choice.save();
                     {
                         let mut s = state.lock().unwrap();
                         s.model = choice.clone();
                         s.progress = None;
+                        s.model_error = None;
+                        s.phase = Phase::Loading;
                     }
-                    std::mem::replace(&mut loader, Loader::start(&state, choice)).cancel();
+                    if let Some(old) = loader.replace(Loader::start(&state, choice)) {
+                        old.cancel();
+                    }
                 }
                 Cmd::UseModel(_) => {}
                 cmd => queue.push(cmd),
@@ -315,13 +324,19 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
         if let Some(r) = &recorder {
             state.lock().unwrap().level = r.level();
         }
+        if recorder.is_some() && loader.as_ref().is_some_and(|l| l.handle.is_finished()) {
+            match loader.take().unwrap().join() {
+                Ok(engine) => break engine,
+                Err(e) => {
+                    fail(&state, e.clone());
+                    state.lock().unwrap().model_error = Some(e);
+                }
+            }
+        }
         std::thread::sleep(Duration::from_millis(30));
-    }
-    let mut recorder = recorder.unwrap();
-    let mut engine = match loader.join() {
-        Ok(engine) => engine,
-        Err(e) => return fail(&state, e),
     };
+    let mut recorder = recorder.unwrap();
+    state.lock().unwrap().model_error = None;
     // A model downloading to take over, while the current one keeps working.
     let mut switch: Option<Loader> = None;
     let ready = |state: &Shared| {
