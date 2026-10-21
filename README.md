@@ -105,7 +105,8 @@ Pick one on the welcome screen, or any time in Settings:
 
 - **Bark 3.0 Clean** (399 MB): English. Leaves out "um", "uh", false starts and
   repeats, so you get what you meant. The default on a Mac set to English.
-- **Phonon-2** (353 MB): English, every word. The fewest mistakes of any model here.
+- **Fluid Speech Mini** (312 MB): English, every word. The fewest mistakes of any model
+  here, and good with other voices in the room.
 - **Parakeet v3** (487 MB): every word, in English and 24 European languages. The
   default otherwise.
 - **Your own**: Settings → Use a model folder. Any sherpa-onnx transducer (encoder,
@@ -115,13 +116,13 @@ Switching downloads the new model while the current one keeps working. Models ar
 downloaded from this repository's releases and checked against a SHA-256 before use.
 
 Bark 3.0 Clean ([Underdog](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Clean))
-and Phonon-2 ([Fermion Research](https://huggingface.co/FermionResearch/Phonon-2)) are
+and Fluid Speech Mini ([FluidVoice](https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-onnx)) are
 fine-tunes of NVIDIA's Parakeet TDT 0.6B v3, converted for sherpa-onnx. Measured with
 [heyra-bench](https://github.com/alcun/heyra-bench) on 800 clips (% of words wrong):
 
 | | Average | Off the cuff, against what was meant |
 |---|--:|--:|
-| Phonon-2 | 7.3 | 17.1 |
+| Fluid Speech Mini | 6.6 | 17.3 |
 | Parakeet v3 | 8.1 | 17.5 |
 | Bark 3.0 Clean | 9.9 | 6.1 |
 

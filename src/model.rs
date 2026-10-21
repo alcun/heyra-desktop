@@ -47,17 +47,17 @@ pub const BARK_CLEAN: Model = Model {
     sources: &["https://github.com/alcun/heyra-desktop/releases/download/model-bark-3.0-clean/underdog-bark-3.0-clean-int8.tar.bz2"],
 };
 
-pub const PHONON: Model = Model {
-    id: "phonon-2",
-    name: "Phonon-2",
+pub const FLUID: Model = Model {
+    id: "fluid-speech-mini",
+    name: "Fluid Speech Mini",
     note: "English, every word",
-    dir: "fermion-phonon-2-int8",
-    mb: 353,
-    sha256: "3ab6d20d7804fe388e7605b0aee078e51226eca9ad887c121a69cd68ce98da8c",
-    sources: &["https://github.com/alcun/heyra-desktop/releases/download/model-phonon-2/fermion-phonon-2-int8.tar.bz2"],
+    dir: "fluidvoice-fluid-speech-mini",
+    mb: 312,
+    sha256: "20caa640d57487093d6c4941a2f5261608d28f77f07c4ea90952b5efb9293a0c",
+    sources: &["https://github.com/alcun/heyra-desktop/releases/download/model-fluid-speech-mini/fluidvoice-fluid-speech-mini.tar.bz2"],
 };
 
-pub const ALL: [&Model; 3] = [&BARK_CLEAN, &PHONON, &PARAKEET];
+pub const ALL: [&Model; 3] = [&BARK_CLEAN, &FLUID, &PARAKEET];
 
 /// The model a new install starts with: Bark Clean on a Mac set to English,
 /// Parakeet (which finds the language itself) on any other.

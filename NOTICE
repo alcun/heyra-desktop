@@ -15,13 +15,15 @@ Speech model: Underdog Bark 3.0 Clean, by Conway Research
   sherpa-onnx's ONNX export of Parakeet TDT 0.6B v3 and quantizes them to int8,
   as sherpa-onnx does for Parakeet. The weights are otherwise unmodified.
 
-Speech model: Phonon-2, by Fermion Research
-  https://huggingface.co/FermionResearch/Phonon-2
-  Licensed CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Derived from
-  nvidia/parakeet-tdt-0.6b-v3 ((c) NVIDIA Corporation, CC BY 4.0).
-  Changes: Heyra unpacks Fermion Research's official model.fermion container,
-  places the weights in sherpa-onnx's ONNX export of Parakeet TDT 0.6B v3 and
-  quantizes them to int8. The weights are otherwise unmodified.
+Speech model: Fluid Speech Mini by FluidVoice. Built on NVIDIA Parakeet TDT 0.6B v3
+and Moondream Parakeet Ultra.
+  https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-onnx
+  https://huggingface.co/moondream/parakeet-ultra
+  Licensed CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).
+  Changes: Heyra unpacks the 2- and 4-bit weights of FluidVoice's ONNX build, places
+  them in sherpa-onnx's ONNX export of Parakeet TDT 0.6B v3 and stores them again as
+  4-bit blocks on the same grid, so each weight is as FluidVoice published it. The
+  decoder and joint network are quantized to int8.
 
 sherpa-onnx (speech runtime) - Apache License 2.0
   https://github.com/k2-fsa/sherpa-onnx

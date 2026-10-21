@@ -3,10 +3,11 @@
 ## Unreleased
 
 - Choose your voice model on the welcome screen or in Settings: Bark 3.0 Clean (English,
-  without the "um"s), the default on a Mac set to English; Phonon-2 (English, every
-  word); or Parakeet v3 (every word, 25 languages). Or point Heyra at a folder with a
-  sherpa-onnx model of your own.
-- Switching downloads the new model while the current one keeps working.
+  without the "um"s), the default on a Mac set to English; Fluid Speech Mini (English,
+  every word); or Parakeet v3 (every word, 25 languages). Or point Heyra at a folder
+  with a sherpa-onnx model of your own.
+- Switching downloads the new model while the current one keeps working. A dropped
+  download resumes where it stopped and retries by itself.
 
 ## 0.3.11
 
