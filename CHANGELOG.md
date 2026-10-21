@@ -2,10 +2,16 @@
 
 ## Unreleased
 
-- Choose your voice model: Bark 3.0 Clean, Bark 3.0 or Parakeet v3, on the welcome
-  screen and in Settings. Or point Heyra at a folder with a sherpa-onnx model of your own.
-- Switching downloads the new model while the old one keeps working.
-- Fixed: some takes came back empty. The speech engine is now sherpa-onnx 1.13.8.
+- Choose your voice model on the welcome screen or in Settings: Bark 3.0 Clean (English,
+  without the "um"s), the default on a Mac set to English, or Parakeet v3 (every word, 25
+  languages). Or point Heyra at a folder with a sherpa-onnx model of your own.
+- Switching downloads the new model while the current one keeps working.
+
+## 0.3.11
+
+- Fixed: some takes came back empty, or missed whole sentences. The speech engine is now
+  sherpa-onnx 1.13.8.
+- Fixed: long hands-free takes lost words. They now go in 15-second pieces.
 
 ## 0.3.10
 

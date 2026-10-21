@@ -41,11 +41,11 @@ impl Engine for Transducer {
     }
 }
 
-/// Parakeet aborts the whole process past about six and a half minutes of
-/// audio, and its memory grows fast well before that, so long takes go in in
-/// pieces of about a minute, each cut at the quietest moment near its end.
-const PIECE_SECS: f32 = 60.0;
-const LOOK_BACK_SECS: f32 = 10.0;
+/// Parakeet skips stretches of speech in a long input (a 7-minute take in
+/// 60-second pieces lost a quarter of its words), so long takes go in in
+/// pieces of about 15 seconds, each cut at the quietest moment near its end.
+const PIECE_SECS: f32 = 15.0;
+const LOOK_BACK_SECS: f32 = 5.0;
 
 pub fn transcribe_long(engine: &mut dyn Engine, sample_rate: u32, samples: &[f32]) -> String {
     let rate = sample_rate as f32;
