@@ -785,11 +785,22 @@ impl Main {
             (_, Some(c @ Choice::Folder(_))) | (c @ Choice::Folder(_), _) => Some(c.clone()),
             _ => None,
         };
-        if let Some(Choice::Folder(dir)) = &folder {
-            let using = in_use == Choice::Folder(dir.clone());
+        if let Some(choice @ Choice::Folder(dir)) = &folder {
+            let using = in_use == *choice;
+            let (status, color) = if using && failed {
+                ("TRY AGAIN", REC)
+            } else if using && phase != Phase::Loading {
+                ("IN USE", GOLD)
+            } else {
+                ("LOADING", GOLD)
+            };
+            let (cmds, choice) = (self.cmds.clone(), choice.clone());
             rows.push(
-                row(("model", 99), Choice::Folder(dir.clone()).name(), dir.display().to_string(), using)
-                    .child(div().font_family(MONO).text_xs().text_color(rgb(GOLD)).child(if using { "IN USE" } else { "LOADING" }))
+                row(("model", 99), choice.name(), dir.display().to_string(), using)
+                    .on_click(move |_, _, _| {
+                        let _ = cmds.send(Cmd::UseModel(choice.clone()));
+                    })
+                    .child(div().font_family(MONO).text_xs().text_color(rgb(color)).child(status))
                     .into_any_element(),
             );
         }

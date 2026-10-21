@@ -86,39 +86,36 @@ impl Loader {
         let handle = {
             let (state, choice, cancel) = (state.clone(), choice.clone(), cancel.clone());
             std::thread::spawn(move || -> Result<Box<dyn Engine>, String> {
-                // Messages are for the first load; a switch shows in Settings, not the dot.
-                let say = |s: &mut State, text: String| {
-                    if s.phase == Phase::Loading {
-                        s.message = text;
+                // Every write checks `cancel` while holding the lock, and a replaced loader
+                // is cancelled before the state is reset for its successor, so nothing
+                // stale lands after the reset. Messages are for the first load; a switch
+                // shows in Settings, not the dot.
+                let update = |change: &dyn Fn(&mut State)| {
+                    let mut s = state.lock().unwrap();
+                    if !cancel.load(Ordering::Relaxed) {
+                        change(&mut s);
                     }
                 };
+                let say = |text: String| update(&|s: &mut State| if s.phase == Phase::Loading { s.message = text.clone() });
                 let dir = match (crate::model::find(&choice), &choice) {
                     (Some(dir), _) => dir,
                     (None, Choice::Listed(id)) => {
                         let model = crate::model::by_id(id).ok_or("that model isn't on the list")?;
-                        let (progress_state, progress_cancel) = (state.clone(), cancel.clone());
-                        let got = model.download(&cancel, move |done, total| {
-                            // A download that was replaced says nothing more.
-                            if progress_cancel.load(Ordering::Relaxed) {
-                                return;
-                            }
-                            let mut s = progress_state.lock().unwrap();
+                        let got = model.download(&cancel, |done, total| {
                             let mb = |b: u64| b / 1_000_000;
-                            s.progress = (total > 0).then(|| done as f32 / total as f32);
-                            say(&mut s, if total > 0 {
+                            update(&|s: &mut State| s.progress = (total > 0).then(|| done as f32 / total as f32));
+                            say(if total > 0 {
                                 format!("Downloading the voice model, once: {} of {} MB", mb(done), mb(total))
                             } else {
                                 format!("Downloading the voice model, once: {} MB", mb(done))
                             });
                         });
-                        if !cancel.load(Ordering::Relaxed) {
-                            state.lock().unwrap().progress = None;
-                        }
+                        update(&|s: &mut State| s.progress = None);
                         got?
                     }
                     (None, Choice::Folder(dir)) => return Err(format!("{} isn't there any more", dir.display())),
                 };
-                say(&mut state.lock().unwrap(), "Loading the voice model…".into());
+                say("Loading the voice model…".into());
                 let engine = Transducer::load(&dir)?;
                 store::log(&format!("model loaded: {}", dir.display()));
                 Ok(Box::new(engine))
@@ -299,6 +296,9 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                 Cmd::UseModel(choice) if loader.as_ref().is_none_or(|l| l.choice != choice) => {
                     store::log(&format!("model chosen: {}", choice.name()));
                     choice.save();
+                    if let Some(old) = loader.take() {
+                        old.cancel();
+                    }
                     {
                         let mut s = state.lock().unwrap();
                         s.model = choice.clone();
@@ -306,9 +306,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                         s.model_error = None;
                         s.phase = Phase::Loading;
                     }
-                    if let Some(old) = loader.replace(Loader::start(&state, choice)) {
-                        old.cancel();
-                    }
+                    loader = Some(Loader::start(&state, choice));
                 }
                 Cmd::UseModel(_) => {}
                 cmd => queue.push(cmd),

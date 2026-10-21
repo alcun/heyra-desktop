@@ -102,7 +102,7 @@ impl Choice {
         match (settings.model.as_deref(), settings.model_folder) {
             (Some("folder"), Some(dir)) => Choice::Folder(dir),
             (Some(id), _) if by_id(id).is_some() => Choice::Listed(by_id(id).unwrap().id),
-            (None, _) if settings.onboarded => Choice::Listed(PARAKEET.id),
+            (None, _) if settings.onboarded || PARAKEET.find().is_some() => Choice::Listed(PARAKEET.id),
             _ => Choice::Listed(default().id),
         }
     }
@@ -166,6 +166,21 @@ impl Model {
             .find(|d| files(d).is_ok())
     }
 
+    /// Move a freshly unpacked folder into place, replacing any broken copy.
+    fn place(&self, unpacked: &Path, dir: &Path) -> Result<PathBuf, String> {
+        files(unpacked).map_err(|_| "the model archive was missing files".to_string())?;
+        let target = dir.join(self.dir);
+        if target.exists() {
+            // Another download of the same model finished first: keep whichever is whole.
+            if files(&target).is_ok() {
+                return Ok(target);
+            }
+            fs::remove_dir_all(&target).map_err(|e| e.to_string())?;
+        }
+        fs::rename(unpacked, &target).map_err(|e| format!("couldn't put the model in place: {e}"))?;
+        Ok(target)
+    }
+
     /// Delete the downloaded copy.
     pub fn remove(&self) -> Result<(), String> {
         let dir = models_dir().join(self.dir);
@@ -186,17 +201,22 @@ impl Model {
         progress: impl Fn(u64, u64),
     ) -> Result<PathBuf, String> {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        let archive = dir.join(format!("{}.tar.bz2.part", self.dir));
+        // Every download has its own partial file and unpacking folder, so a replaced
+        // download still finishing can't touch this one, and a model only appears under
+        // its own name once it has unpacked completely.
+        let pid = std::process::id();
+        clear_leftovers(dir, pid);
+        let unique = format!("{pid}-{}", DOWNLOADS.fetch_add(1, Ordering::Relaxed));
+        let archive = dir.join(format!("{}.{unique}.tar.bz2.part", self.dir));
         let mut last_error = String::new();
         for url in sources {
             match fetch(url, &archive, self.sha256, cancel, &progress) {
                 Ok(()) => {
-                    let unpacked = unpack(&archive, dir);
+                    let aside = dir.join(format!(".unpacking-{unique}"));
+                    let placed = unpack(&archive, &aside).and_then(|()| self.place(&aside.join(self.dir), dir));
                     let _ = fs::remove_file(&archive);
-                    unpacked?;
-                    let target = dir.join(self.dir);
-                    files(&target).map_err(|_| "the model archive was missing files".to_string())?;
-                    return Ok(target);
+                    let _ = fs::remove_dir_all(&aside);
+                    return placed;
                 }
                 Err(e) if cancel.load(Ordering::Relaxed) => {
                     let _ = fs::remove_file(&archive);
@@ -225,6 +245,25 @@ pub fn find(choice: &Choice) -> Option<PathBuf> {
 }
 
 pub const CANCELLED: &str = "cancelled";
+
+/// Partial files and unpacking folders left by an earlier run that quit mid-download.
+/// This run's own, which may still be in use, are left alone.
+fn clear_leftovers(dir: &Path, pid: u32) {
+    let mine = format!(".{pid}-");
+    let mine_aside = format!(".unpacking-{pid}-");
+    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let leftover = (name.ends_with(".tar.bz2.part") && !name.contains(&mine))
+            || (name.starts_with(".unpacking-") && !name.starts_with(&mine_aside));
+        if leftover {
+            let path = entry.path();
+            let _ = if path.is_dir() { fs::remove_dir_all(&path) } else { fs::remove_file(&path) };
+        }
+    }
+}
+
+/// Numbers each download, for its own partial file.
+static DOWNLOADS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn fetch(url: &str, to: &Path, sha256: &str, cancel: &AtomicBool, progress: &impl Fn(u64, u64)) -> Result<(), String> {
     let response = ureq::get(url).call().map_err(|e| e.to_string())?;
@@ -286,7 +325,26 @@ mod tests {
             })
             .unwrap_err();
         assert_eq!(err, super::CANCELLED);
-        assert!(!dir.join("again").join("underdog-bark-3.0-clean-int8.tar.bz2.part").exists());
+        let left: Vec<_> = std::fs::read_dir(dir.join("again")).unwrap().flatten().collect();
+        assert!(left.is_empty(), "a cancelled download left {left:?}");
+
+        // Two downloads of the same model at once (chosen, replaced, chosen again) both
+        // finish, and a partial file from a run that died is cleared.
+        let both = dir.join("both");
+        std::fs::create_dir_all(&both).unwrap();
+        std::fs::write(both.join("underdog-bark-3.0-clean-int8.99999-0.tar.bz2.part"), b"old").unwrap();
+        let results: Vec<_> = std::thread::scope(|scope| {
+            let runs: Vec<_> = (0..2)
+                .map(|_| scope.spawn(|| super::BARK_CLEAN.download_from(&[&url], &both, &AtomicBool::new(false), |_, _| {})))
+                .collect();
+            runs.into_iter().map(|r| r.join().unwrap()).collect()
+        });
+        for r in &results {
+            assert!(super::files(r.as_ref().expect("both downloads finish")).is_ok());
+        }
+        let names: Vec<String> =
+            std::fs::read_dir(&both).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, ["underdog-bark-3.0-clean-int8"], "leftovers: {names:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
