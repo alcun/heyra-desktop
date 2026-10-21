@@ -15,6 +15,7 @@ use gpui::prelude::*;
 use crate::gpu_orb::{Gpu, Motion};
 use crate::setup::{self, Mic};
 use crate::ui::{CREAM, GOLD, GROUND, MONO, SANS, SLATE, alpha};
+use crate::model::Choice;
 use crate::worker::{Cmd, Phase, Shared};
 use std::sync::mpsc::Sender;
 
@@ -24,6 +25,7 @@ const ORB: f32 = 200.;
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Step {
     Welcome,
+    Model,
     Microphone,
     Access,
     FnKey,
@@ -83,12 +85,12 @@ impl Onboarding {
             Step::Microphone => checks.mic == Mic::Allowed,
             Step::Access => checks.accessibility,
             Step::FnKey => checks.fn_free,
-            Step::Welcome | Step::Try | Step::Ready | Step::Keep => false,
+            Step::Welcome | Step::Model | Step::Try | Step::Ready | Step::Keep => false,
         }
     }
 
     fn advance(&mut self) {
-        const ORDER: [Step; 7] = [Step::Welcome, Step::Microphone, Step::Access, Step::FnKey, Step::Try, Step::Ready, Step::Keep];
+        const ORDER: [Step; 8] = [Step::Welcome, Step::Model, Step::Microphone, Step::Access, Step::FnKey, Step::Try, Step::Ready, Step::Keep];
         let at = ORDER.iter().position(|&s| s == self.step).unwrap_or(0);
         self.step = ORDER[at + 1..].iter().copied().find(|&s| !self.done(s)).unwrap_or(Step::Keep);
         if self.step == Step::Try {
@@ -176,6 +178,66 @@ fn line(text: &str) -> gpui::Div {
     row
 }
 
+impl Onboarding {
+    /// The listed models, one picked already. Picking another starts its download now.
+    fn models(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let chosen = self.state.lock().unwrap().model.clone();
+        let rows = crate::model::ALL.iter().enumerate().map(|(i, m)| {
+            let selected = chosen == Choice::Listed(m.id);
+            let cmds = self.cmds.clone();
+            div()
+                .id(("model", i))
+                .w(px(340.))
+                .px(px(14.))
+                .py(px(9.))
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .rounded(px(10.))
+                .border_1()
+                .border_color(alpha(if selected { GOLD } else { CREAM }, if selected { 0.55 } else { 0.10 }))
+                .bg(alpha(if selected { GOLD } else { CREAM }, if selected { 0.08 } else { 0.0 }))
+                .cursor_pointer()
+                .hover(move |d| d.bg(alpha(if selected { GOLD } else { CREAM }, if selected { 0.12 } else { 0.04 })))
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    let _ = cmds.send(Cmd::UseModel(Choice::Listed(m.id)));
+                    cx.notify();
+                }))
+                .child(
+                    div()
+                        .flex_none()
+                        .size(px(9.))
+                        .rounded_full()
+                        .border_1()
+                        .border_color(alpha(if selected { GOLD } else { SLATE }, 0.9))
+                        .when(selected, |d| d.bg(rgb(GOLD))),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .text_size(px(13.5))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(rgb(if selected { CREAM } else { SLATE }))
+                                .child(m.name),
+                        )
+                        .child(div().text_size(px(12.)).text_color(alpha(SLATE, 0.85)).child(m.note)),
+                )
+                .child(
+                    div()
+                        .font_family(MONO)
+                        .text_size(px(10.5))
+                        .text_color(alpha(SLATE, 0.8))
+                        .child(if std::ptr::eq(*m, crate::model::default()) { "PICKED FOR YOU".to_string() } else { format!("{} MB", m.mb) }),
+                )
+        });
+        div().pt(px(6.)).flex().flex_col().gap(px(8.)).children(rows)
+    }
+}
+
 /// A soft rounded button; the main one is lit.
 fn pill(id: &'static str, text: impl Into<gpui::SharedString>, main: bool) -> Stateful<gpui::Div> {
     div()
@@ -218,6 +280,12 @@ impl Render for Onboarding {
                 "Heyra".into(),
                 "Hold fn, talk, let go.\nYour words appear where you're typing. Nothing leaves this Mac.".into(),
                 Some("Begin"),
+                None,
+            ),
+            Step::Model => (
+                "Voice model".into(),
+                "It turns your voice into text, on this Mac.\nChange it any time in Settings.".into(),
+                Some("Continue"),
                 None,
             ),
             Step::Microphone => match mic {
@@ -276,7 +344,7 @@ impl Render for Onboarding {
         let mic_now = mic;
         let act = cx.listener(move |this, _, window, cx| {
             match step {
-                Step::Welcome => this.advance(),
+                Step::Welcome | Step::Model => this.advance(),
                 Step::Microphone => match mic_now {
                     Mic::Allowed => this.advance(),
                     Mic::Denied => setup::open_settings(setup::PANE_MICROPHONE),
@@ -315,6 +383,8 @@ impl Render for Onboarding {
             cx.notify();
         });
 
+        // The model list needs the room: the orb steps back for it.
+        let orb = if step == Step::Model { ORB * 0.55 } else { ORB };
         let content = div()
             .flex()
             .flex_col()
@@ -343,6 +413,7 @@ impl Render for Onboarding {
                     .text_color(rgb(SLATE))
                     .children(words.lines().map(line).collect::<Vec<_>>()),
             )
+            .when(step == Step::Model, |d| d.child(self.models(cx)))
             .child(
                 div()
                     .pt(px(16.))
@@ -369,7 +440,7 @@ impl Render for Onboarding {
             .flex_col()
             .items_center()
             .pt(px(56.))
-            .child(div().size(px(ORB)).children(frame.map(|f| img(ImageSource::Render(f)).size(px(ORB)))))
+            .child(div().size(px(orb)).children(frame.map(|f| img(ImageSource::Render(f)).size(px(orb)))))
             .child(div().pt(px(20.)).child(content))
             // The model downloads behind every step; a hairline shows how far.
             .when_some(progress.filter(|_| loading && step != Step::Try), |d, p| {
