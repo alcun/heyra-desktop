@@ -2953,6 +2953,7 @@ dependencies = [
  "gpui",
  "hound",
  "image",
+ "libc",
  "metal",
  "objc",
  "raw-window-handle",

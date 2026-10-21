@@ -260,7 +260,12 @@ fn main() {
         let model = model::default();
         let result = model.find().map(Ok).unwrap_or_else(|| {
             let cancel = std::sync::atomic::AtomicBool::new(false);
-            model.download(&cancel, |done, total| eprint!("\r{} / {} MB   ", done / 1_000_000, total / 1_000_000))
+            model
+                .download(&cancel, |p| match p {
+                    model::Progress::Bytes(done, total) => eprint!("\r{} / {} MB   ", done / 1_000_000, total / 1_000_000),
+                    model::Progress::Retrying { reason, .. } => eprintln!("\n{reason} Trying again…"),
+                })
+                .map_err(|e| e.message())
         });
         eprintln!();
         match result {

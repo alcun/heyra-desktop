@@ -260,10 +260,13 @@ fn pill(id: &'static str, text: impl Into<gpui::SharedString>, main: bool) -> St
 
 impl Render for Onboarding {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (phase, level, progress, history_len, last_text) = {
+        let (phase, level, progress, history_len, last_text, retry, failure) = {
             let s = self.state.lock().unwrap();
-            (s.phase, s.level, s.progress, s.history.len(), s.history.last().map(|e| e.text.clone()))
+            (s.phase, s.level, s.progress, s.history.len(), s.history.last().map(|e| e.text.clone()), s.retry.clone(),
+             s.model_error.as_ref().map(|(_, e)| e.clone()))
         };
+        let retry_in = retry.as_ref().map(|(_, at)| at.saturating_duration_since(Instant::now()).as_secs() + 1);
+        let failed = phase == Phase::Error && failure.is_some();
         // Steps that finish outside this window (System Settings) move on by themselves.
         if matches!(self.step, Step::Access | Step::FnKey) && self.done(self.step) {
             self.advance();
@@ -316,6 +319,18 @@ impl Render for Onboarding {
                 Some("Skip"),
             ),
             Step::Try if tried => (String::new(), "That's Heyra.".into(), Some("Continue"), None),
+            Step::Try if failed => (
+                "Couldn't download".into(),
+                failure.clone().unwrap_or_default(),
+                Some("Try again"),
+                Some("Choose another"),
+            ),
+            Step::Try if loading && retry.is_some() => (
+                "Almost ready".into(),
+                format!("{}\nTrying again in {} s.", retry.as_ref().map(|(w, _)| w.as_str()).unwrap_or(""), retry_in.unwrap_or(1)),
+                None,
+                Some("Done"),
+            ),
             Step::Try if loading => (
                 "Almost ready".into(),
                 format!(
@@ -342,6 +357,7 @@ impl Render for Onboarding {
 
         let step = self.step;
         let mic_now = mic;
+        let failed_now = failed;
         let act = cx.listener(move |this, _, window, cx| {
             match step {
                 Step::Welcome | Step::Model => this.advance(),
@@ -362,6 +378,11 @@ impl Render for Onboarding {
                     crate::hotkey::trusted(true);
                 }
                 Step::FnKey => setup::open_settings(setup::PANE_KEYBOARD),
+                // Resume the download that failed.
+                Step::Try if failed_now => {
+                    let model = this.state.lock().unwrap().model.clone();
+                    let _ = this.cmds.send(Cmd::UseModel(model));
+                }
                 Step::Try => this.advance(),
                 Step::Ready => this.advance(),
                 // Off it goes, to the dot it lives in.
@@ -377,6 +398,8 @@ impl Render for Onboarding {
             if step == Step::Keep {
                 window.remove_window();
                 crate::ui::open_main(cx, this.state.clone(), this.cmds.clone());
+            } else if step == Step::Try && failed_now {
+                this.step = Step::Model;
             } else {
                 this.advance();
             }
@@ -459,7 +482,10 @@ impl Render for Onboarding {
                                 .font_family(MONO)
                                 .text_size(px(10.5))
                                 .text_color(alpha(SLATE, 0.8))
-                                .child(format!("VOICE MODEL · {}%", (p * 100.) as u32)),
+                                .child(match retry_in {
+                                    Some(secs) => format!("VOICE MODEL · RETRYING IN {secs}s"),
+                                    None => format!("VOICE MODEL · {}%", (p * 100.) as u32),
+                                }),
                         )
                         .child(
                             div()

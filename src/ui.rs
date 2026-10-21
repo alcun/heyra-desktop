@@ -708,12 +708,28 @@ impl Main {
     /// The speech models: Heyra's list, then a folder of your own. Clicking one
     /// downloads it if needed and switches; the current one works until then.
     fn models(&self, cx: &mut Context<Self>) -> Div {
-        let (in_use, switching, progress, error, phase) = {
+        let (in_use, switching, progress, error, phase, retry) = {
             let s = self.state.lock().unwrap();
-            (s.model.clone(), s.switching.clone(), s.progress, s.model_error.clone(), s.phase)
+            (s.model.clone(), s.switching.clone(), s.progress, s.model_error.clone(), s.phase, s.retry.clone())
         };
-        // The first load failed (offline, say): clicking the model tries again.
-        let failed = phase == Phase::Error && error.is_some();
+        // One status for any model row: failed, downloading (or waiting to retry), or at rest.
+        let status = |choice: &Choice, rest: (String, u32)| -> (String, u32) {
+            let busy = switching.as_ref() == Some(choice) || (in_use == *choice && phase == Phase::Loading);
+            if error.as_ref().is_some_and(|(c, _)| c == choice) && !busy {
+                ("TRY AGAIN".into(), REC)
+            } else if busy {
+                match (&retry, progress) {
+                    (Some((_, at)), _) => {
+                        let secs = at.saturating_duration_since(Instant::now()).as_secs() + 1;
+                        (format!("RETRYING IN {secs}s"), GOLD)
+                    }
+                    (None, Some(p)) => (format!("DOWNLOADING {}%", (p * 100.) as u32), GOLD),
+                    (None, None) => ("LOADING".into(), GOLD),
+                }
+            } else {
+                rest
+            }
+        };
         let row = |id: (&'static str, usize), name: String, note: String, selected: bool| {
             div()
                 .id(id)
@@ -747,21 +763,15 @@ impl Main {
         for (i, m) in model::ALL.iter().enumerate() {
             let choice = Choice::Listed(m.id);
             let using = in_use == choice;
-            let loading = switching.as_ref() == Some(&choice);
             let here = m.find().is_some();
-            let (status, color) = if using && failed {
-                ("TRY AGAIN".to_string(), REC)
-            } else if using && phase == Phase::Loading {
-                (progress.map_or("LOADING".into(), |p| format!("DOWNLOADING {}%", (p * 100.) as u32)), GOLD)
-            } else if using {
-                ("IN USE".to_string(), GOLD)
-            } else if loading {
-                (progress.map_or("LOADING".into(), |p| format!("DOWNLOADING {}%", (p * 100.) as u32)), GOLD)
+            let busy = switching.as_ref() == Some(&choice);
+            let (status, color) = status(&choice, if using {
+                ("IN USE".into(), GOLD)
             } else if here {
                 ("ON THIS MAC".into(), DIM)
             } else {
                 (format!("{} MB", m.mb), DIM)
-            };
+            });
             let cmds = self.cmds.clone();
             rows.push(
                 row(("model", i), m.name.into(), m.note.into(), using)
@@ -769,7 +779,7 @@ impl Main {
                         let _ = cmds.send(Cmd::UseModel(Choice::Listed(m.id)));
                     })
                     .child(div().font_family(MONO).text_xs().text_color(rgb(color)).child(status))
-                    .when(here && !using && !loading, |d| {
+                    .when(here && !using && !busy, |d| {
                         d.child(button(("remove", i), "REMOVE").on_click(move |_, _, cx| {
                             cx.stop_propagation();
                             if let Err(e) = m.remove() {
@@ -787,13 +797,7 @@ impl Main {
         };
         if let Some(choice @ Choice::Folder(dir)) = &folder {
             let using = in_use == *choice;
-            let (status, color) = if using && failed {
-                ("TRY AGAIN", REC)
-            } else if using && phase != Phase::Loading {
-                ("IN USE", GOLD)
-            } else {
-                ("LOADING", GOLD)
-            };
+            let (status, color) = status(choice, if using { ("IN USE".into(), GOLD) } else { ("LOADING".into(), GOLD) });
             let (cmds, choice) = (self.cmds.clone(), choice.clone());
             rows.push(
                 row(("model", 99), choice.name(), dir.display().to_string(), using)
@@ -820,7 +824,7 @@ impl Main {
                     Ok(_) => {
                         let _ = cmds.send(Cmd::UseModel(Choice::Folder(dir)));
                     }
-                    Err(e) => state.lock().unwrap().model_error = Some(e),
+                    Err(e) => state.lock().unwrap().model_error = Some((Choice::Folder(dir), format!("That folder has no model Heyra can use: {e}"))),
                 }
             })
             .detach();
@@ -831,7 +835,8 @@ impl Main {
             .gap_2()
             .child(label("VOICE MODEL"))
             .child(div().flex().flex_col().children(rows))
-            .children(error.map(|e| div().text_sm().text_color(rgb(REC)).child(e)))
+            .children(error.map(|(c, e)| div().text_sm().text_color(rgb(REC)).child(format!("{}: {e}", c.name()))))
+            .children(retry.map(|(why, _)| div().text_sm().text_color(rgb(SLATE)).child(format!("{why} Heyra tries again by itself."))))
             .child(div().flex().pt_1().gap_2().child(choose).child(button("data", "OPEN DATA FOLDER").on_click(|_, _, _| {
                 let _ = std::process::Command::new("open").arg(store::dir()).spawn();
             })))

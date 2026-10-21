@@ -54,8 +54,10 @@ pub struct State {
     pub model: Choice,
     /// A model being downloaded or loaded to take over from `model`.
     pub switching: Option<Choice>,
-    /// Why the last switch didn't happen.
-    pub model_error: Option<String>,
+    /// The model that couldn't be loaded, and why, in words for the person.
+    pub model_error: Option<(Choice, String)>,
+    /// A download stopped and tries again by itself: why, and when.
+    pub retry: Option<(String, Instant)>,
 }
 
 pub type Shared = Arc<Mutex<State>>;
@@ -101,17 +103,29 @@ impl Loader {
                     (Some(dir), _) => dir,
                     (None, Choice::Listed(id)) => {
                         let model = crate::model::by_id(id).ok_or("that model isn't on the list")?;
-                        let got = model.download(&cancel, |done, total| {
-                            let mb = |b: u64| b / 1_000_000;
-                            update(&|s: &mut State| s.progress = (total > 0).then(|| done as f32 / total as f32));
-                            say(if total > 0 {
-                                format!("Downloading the voice model, once: {} of {} MB", mb(done), mb(total))
-                            } else {
-                                format!("Downloading the voice model, once: {} MB", mb(done))
-                            });
+                        let got = model.download(&cancel, |p| match p {
+                            crate::model::Progress::Bytes(done, total) => {
+                                let mb = |b: u64| b / 1_000_000;
+                                update(&|s: &mut State| {
+                                    s.progress = (total > 0).then(|| done as f32 / total as f32);
+                                    s.retry = None;
+                                });
+                                say(if total > 0 {
+                                    format!("Downloading the voice model, once: {} of {} MB", mb(done), mb(total))
+                                } else {
+                                    format!("Downloading the voice model, once: {} MB", mb(done))
+                                });
+                            }
+                            crate::model::Progress::Retrying { reason, at } => {
+                                update(&|s: &mut State| s.retry = Some((reason.clone(), at)));
+                                say(format!("{reason} Trying again soon."));
+                            }
                         });
-                        update(&|s: &mut State| s.progress = None);
-                        got?
+                        update(&|s: &mut State| {
+                            s.progress = None;
+                            s.retry = None;
+                        });
+                        got.map_err(|e| e.message())?
                     }
                     (None, Choice::Folder(dir)) => return Err(format!("{} isn't there any more", dir.display())),
                 };
@@ -156,6 +170,7 @@ pub fn new_state() -> Shared {
         model: Choice::saved(),
         switching: None,
         model_error: None,
+        retry: None,
     }))
 }
 
@@ -326,8 +341,9 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
             match loader.take().unwrap().join() {
                 Ok(engine) => break engine,
                 Err(e) => {
+                    let choice = state.lock().unwrap().model.clone();
                     fail(&state, e.clone());
-                    state.lock().unwrap().model_error = Some(e);
+                    state.lock().unwrap().model_error = Some((choice, e));
                 }
             }
         }
@@ -535,7 +551,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                 }
                 Err(e) => {
                     store::log(&format!("model switch failed: {e}"));
-                    s.model_error = Some(e);
+                    s.model_error = Some((choice, e));
                 }
             }
         }

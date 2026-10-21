@@ -3,7 +3,7 @@
 //! SHA-256 and unpacked. These downloads are the only time Heyra touches the network.
 
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -187,10 +187,10 @@ impl Model {
         if dir.exists() { fs::remove_dir_all(dir).map_err(|e| e.to_string()) } else { Ok(()) }
     }
 
-    /// Download, verify and unpack. `progress(done, total)` is called as bytes
-    /// arrive; setting `cancel` stops it.
-    pub fn download(&self, cancel: &AtomicBool, progress: impl Fn(u64, u64)) -> Result<PathBuf, String> {
-        self.download_from(self.sources, &models_dir(), cancel, progress)
+    /// Download, verify and unpack, resuming and retrying by itself. `on` hears how it's
+    /// going; setting `cancel` stops it.
+    pub fn download(&self, cancel: &AtomicBool, on: impl Fn(Progress)) -> Result<PathBuf, Failure> {
+        self.download_from(self.sources, &models_dir(), cancel, on, &RETRY_WAITS)
     }
 
     fn download_from(
@@ -198,40 +198,129 @@ impl Model {
         sources: &[&str],
         dir: &Path,
         cancel: &AtomicBool,
-        progress: impl Fn(u64, u64),
-    ) -> Result<PathBuf, String> {
-        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        // Every download has its own partial file and unpacking folder, so a replaced
-        // download still finishing can't touch this one, and a model only appears under
-        // its own name once it has unpacked completely.
-        let pid = std::process::id();
-        clear_leftovers(dir, pid);
-        let unique = format!("{pid}-{}", DOWNLOADS.fetch_add(1, Ordering::Relaxed));
-        let archive = dir.join(format!("{}.{unique}.tar.bz2.part", self.dir));
-        let mut last_error = String::new();
-        for url in sources {
-            match fetch(url, &archive, self.sha256, cancel, &progress) {
-                Ok(()) => {
-                    let aside = dir.join(format!(".unpacking-{unique}"));
-                    let placed = unpack(&archive, &aside).and_then(|()| self.place(&aside.join(self.dir), dir));
-                    let _ = fs::remove_file(&archive);
-                    let _ = fs::remove_dir_all(&aside);
-                    return placed;
-                }
-                Err(e) if cancel.load(Ordering::Relaxed) => {
-                    let _ = fs::remove_file(&archive);
-                    return Err(e);
-                }
-                Err(e) => {
-                    crate::store::log(&format!("model download from {url} failed: {e}"));
-                    last_error = e;
+        on: impl Fn(Progress),
+        waits: &[u64],
+    ) -> Result<PathBuf, Failure> {
+        fs::create_dir_all(dir).map_err(|e| Failure::Other(e.to_string()))?;
+        clear_leftovers(dir);
+        // The archive, then the unpacked model beside it: about two and a half times the download.
+        let need = self.mb as u64 * 5 / 2 + 50;
+        if free_mb(dir).is_some_and(|free| free < need) {
+            return Err(Failure::NoSpace(need));
+        }
+        // One partial file per model and checksum, kept between attempts and runs so a
+        // download resumes where it stopped. Locked while in use: if a replaced download
+        // of the same model still holds it, this one starts a file of its own.
+        let stable = dir.join(format!("{}.{}.partial", self.dir, &self.sha256[..12]));
+        let (partial, file) = match open_locked(&stable) {
+            Some(file) => (stable, file),
+            None => {
+                let own = dir.join(format!("{}.{}-{}.partial", self.dir, std::process::id(), DOWNLOADS.fetch_add(1, Ordering::Relaxed)));
+                let file = fs::OpenOptions::new().create(true).truncate(true).read(true).write(true).open(&own)
+                    .map_err(|e| Failure::Other(e.to_string()))?;
+                (own, file)
+            }
+        };
+        let mut damaged_once = false;
+        let mut attempt = 0;
+        let result = loop {
+            // The first source that delivers the whole file wins; a source without it is
+            // skipped, and a network failure moves on to the next source too.
+            // None once a source has delivered the whole file.
+            let mut last = Some(Failure::Unavailable);
+            for url in sources {
+                match fetch(url, &file, cancel, &on) {
+                    Ok(()) => {
+                        last = if file_matches(&file, self.sha256) { None } else { Some(Failure::Damaged) };
+                        break;
+                    }
+                    Err(Failure::Unavailable) => crate::store::log(&format!("model {} not at {url}", self.id)),
+                    Err(e) => {
+                        crate::store::log(&format!("model download from {url}: {e:?}"));
+                        let retry_elsewhere = matches!(e, Failure::Network(_));
+                        last = Some(e);
+                        if !retry_elsewhere {
+                            break;
+                        }
+                    }
                 }
             }
+            let Some(last) = last else { break Ok(()) };
+            match last {
+                Failure::Damaged if !damaged_once => {
+                    damaged_once = true;
+                    let _ = file.set_len(0);
+                }
+                Failure::Network(reason) if attempt < waits.len() => {
+                    let wait = waits[attempt];
+                    attempt += 1;
+                    on(Progress::Retrying { reason: reason.clone(), at: std::time::Instant::now() + std::time::Duration::from_secs(wait) });
+                    for _ in 0..wait * 10 {
+                        if cancel.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                    if cancel.load(Ordering::Relaxed) {
+                        break Err(Failure::Cancelled);
+                    }
+                }
+                other => break Err(other),
+            }
+        };
+        if let Err(e) = result {
+            // Kept for next time, unless it's damaged or this download's own file.
+            if matches!(e, Failure::Damaged) || !partial.ends_with(format!("{}.{}.partial", self.dir, &self.sha256[..12])) {
+                let _ = fs::remove_file(&partial);
+            }
+            return Err(e);
         }
-        let _ = fs::remove_file(&archive);
-        Err(format!("couldn't download {} ({last_error}). Check your connection and try again.", self.name))
+        let aside = dir.join(format!(".unpacking-{}-{}", std::process::id(), DOWNLOADS.fetch_add(1, Ordering::Relaxed)));
+        let placed = unpack(&partial, &aside).and_then(|()| self.place(&aside.join(self.dir), dir)).map_err(Failure::Other);
+        let _ = fs::remove_dir_all(&aside);
+        if placed.is_ok() {
+            let _ = fs::remove_file(&partial);
+        }
+        placed
     }
 }
+
+/// How a download is going.
+pub enum Progress {
+    Bytes(u64, u64),
+    /// It stopped for `reason`, and tries again by itself at `at`.
+    Retrying { reason: String, at: std::time::Instant },
+}
+
+/// Why a download stopped, said plainly.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Failure {
+    Cancelled,
+    /// The connection or the server: worth trying again.
+    Network(String),
+    Unavailable,
+    /// Megabytes of free space it needs.
+    NoSpace(u64),
+    Damaged,
+    Other(String),
+}
+
+impl Failure {
+    pub fn message(&self) -> String {
+        match self {
+            Failure::Cancelled => "Cancelled.".into(),
+            Failure::Network(reason) => format!("{reason} Try again when you're back online."),
+            Failure::Unavailable => "This model isn't available to download right now.".into(),
+            Failure::NoSpace(0) => "Not enough space on this Mac.".into(),
+            Failure::NoSpace(mb) => format!("Not enough space: it needs about {mb} MB free."),
+            Failure::Damaged => "The download arrived damaged twice. Try again later.".into(),
+            Failure::Other(e) => format!("Couldn't download it: {e}"),
+        }
+    }
+}
+
+/// Seconds to wait before each automatic retry.
+const RETRY_WAITS: [u64; 5] = [2, 5, 10, 20, 30];
 
 /// The folder to load for a choice, if it's on disk.
 pub fn find(choice: &Choice) -> Option<PathBuf> {
@@ -244,51 +333,118 @@ pub fn find(choice: &Choice) -> Option<PathBuf> {
     }
 }
 
-pub const CANCELLED: &str = "cancelled";
-
-/// Partial files and unpacking folders left by an earlier run that quit mid-download.
-/// This run's own, which may still be in use, are left alone.
-fn clear_leftovers(dir: &Path, pid: u32) {
-    let mine = format!(".{pid}-");
-    let mine_aside = format!(".unpacking-{pid}-");
+/// Partial downloads of models no longer on the list (or of an older archive), and
+/// unpacking folders left by a run that quit midway. Current models' partials stay, to resume.
+fn clear_leftovers(dir: &Path) {
+    let keep: Vec<String> = ALL.iter().map(|m| format!("{}.{}.partial", m.dir, &m.sha256[..12])).collect();
+    let mine = format!(".unpacking-{}-", std::process::id());
+    let own = format!(".{}-", std::process::id());
     for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let leftover = (name.ends_with(".tar.bz2.part") && !name.contains(&mine))
-            || (name.starts_with(".unpacking-") && !name.starts_with(&mine_aside));
-        if leftover {
+        let stale = (name.ends_with(".partial") && !keep.contains(&name) && !name.contains(&own))
+            || name.ends_with(".tar.bz2.part")
+            || (name.starts_with(".unpacking-") && !name.starts_with(&mine));
+        if stale {
             let path = entry.path();
             let _ = if path.is_dir() { fs::remove_dir_all(&path) } else { fs::remove_file(&path) };
         }
     }
 }
 
-/// Numbers each download, for its own partial file.
+/// Numbers downloads and unpacking folders within this run.
 static DOWNLOADS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-fn fetch(url: &str, to: &Path, sha256: &str, cancel: &AtomicBool, progress: &impl Fn(u64, u64)) -> Result<(), String> {
-    let response = ureq::get(url).call().map_err(|e| e.to_string())?;
-    let total = response.body().content_length().unwrap_or(0);
-    let mut reader = response.into_body().into_reader();
-    let mut file = fs::File::create(to).map_err(|e| e.to_string())?;
+fn open_locked(path: &Path) -> Option<fs::File> {
+    let file = fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(path).ok()?;
+    file.try_lock().ok()?;
+    Some(file)
+}
+
+fn free_mb(dir: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    (unsafe { libc::statvfs(path.as_ptr(), &mut stat) } == 0).then(|| stat.f_bavail as u64 * stat.f_frsize as u64 / 1_000_000)
+}
+
+fn file_matches(file: &fs::File, sha256: &str) -> bool {
+    file.metadata().is_ok_and(|m| m.len() > 0) && hash_of(file).is_some_and(|d| d == sha256)
+}
+
+fn hash_of(file: &fs::File) -> Option<String> {
+    let mut reader = file.try_clone().ok()?;
+    reader.seek(SeekFrom::Start(0)).ok()?;
     let mut hasher = Sha256::new();
-    let mut buf = vec![0u8; 1 << 16];
-    let mut done = 0u64;
+    let mut buf = vec![0u8; 1 << 20];
     loop {
-        if cancel.load(Ordering::Relaxed) {
-            return Err(CANCELLED.into());
-        }
-        let n = reader.read(&mut buf).map_err(|e| e.to_string())?;
+        let n = reader.read(&mut buf).ok()?;
         if n == 0 {
             break;
         }
         hasher.update(&buf[..n]);
-        file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
-        done += n as u64;
-        progress(done, total);
     }
-    let digest: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
-    if digest != sha256 {
-        return Err(format!("checksum mismatch ({digest})"));
+    Some(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+fn agent() -> ureq::Agent {
+    use std::time::Duration;
+    ureq::Agent::config_builder()
+        .timeout_resolve(Some(Duration::from_secs(15)))
+        .timeout_connect(Some(Duration::from_secs(15)))
+        .timeout_recv_response(Some(Duration::from_secs(30)))
+        // A whole attempt; a slow line resumes in the next one.
+        .timeout_recv_body(Some(Duration::from_secs(20 * 60)))
+        .build()
+        .into()
+}
+
+fn network(e: &ureq::Error) -> Failure {
+    match e {
+        ureq::Error::StatusCode(404 | 403 | 410) => Failure::Unavailable,
+        ureq::Error::StatusCode(_) => Failure::Network("The download server isn't answering.".into()),
+        ureq::Error::Io(io) if io.kind() == std::io::ErrorKind::StorageFull => Failure::NoSpace(0),
+        _ => Failure::Network("No internet connection.".into()),
+    }
+}
+
+/// Download `url` into `file`, resuming from what's already there. The caller checks it.
+fn fetch(url: &str, file: &fs::File, cancel: &AtomicBool, on: &impl Fn(Progress)) -> Result<(), Failure> {
+    let have = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let mut request = agent().get(url);
+    if have > 0 {
+        request = request.header("Range", format!("bytes={have}-"));
+    }
+    let response = match request.call() {
+        // Asked for bytes past the end: what's here may already be all of it.
+        Err(ureq::Error::StatusCode(416)) => return Ok(()),
+        other => other.map_err(|e| network(&e))?,
+    };
+    let resumed = response.status() == 206;
+    let mut out = file.try_clone().map_err(|e| Failure::Other(e.to_string()))?;
+    let mut done = if resumed { have } else { 0 };
+    if resumed {
+        out.seek(SeekFrom::End(0)).map_err(|e| Failure::Other(e.to_string()))?;
+    } else {
+        out.set_len(0).and_then(|()| out.seek(SeekFrom::Start(0)).map(|_| ())).map_err(|e| Failure::Other(e.to_string()))?;
+    }
+    let total = done + response.body().content_length().unwrap_or(0);
+    let mut reader = response.into_body().into_reader();
+    let mut buf = vec![0u8; 1 << 16];
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(Failure::Cancelled);
+        }
+        let n = reader.read(&mut buf).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::StorageFull { Failure::NoSpace(0) } else { Failure::Network("The connection dropped.".into()) }
+        })?;
+        if n == 0 {
+            break;
+        }
+        out.write_all(&buf[..n]).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::StorageFull { Failure::NoSpace(0) } else { Failure::Other(e.to_string()) }
+        })?;
+        done += n as u64;
+        on(Progress::Bytes(done, total));
     }
     Ok(())
 }
@@ -304,47 +460,65 @@ fn unpack(archive: &Path, into: &Path) -> Result<(), String> {
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    /// Serve the Bark archive locally (HEYRA_TEST_ARCHIVE_URL), then download,
-    /// verify, unpack and load it; and check a cancelled download stops.
+    /// Against a local server that misbehaves on purpose (HEYRA_TEST_FLAKY, the base URL
+    /// of flaky_server.py serving the Bark archive): a download that drops twice resumes
+    /// and finishes, a missing file and a damaged one fail plainly, and a cancelled one stops.
     #[test]
-    fn downloads_bark_from_a_mirror() {
-        let Ok(url) = std::env::var("HEYRA_TEST_ARCHIVE_URL") else { return };
+    fn downloads_survive_a_flaky_server() {
+        let Ok(base) = std::env::var("HEYRA_TEST_FLAKY") else { return };
         let dir = std::env::temp_dir().join("heyra-model-test");
         let _ = std::fs::remove_dir_all(&dir);
-        let bad = "http://127.0.0.1:9/nothing-here.tar.bz2";
-        let cancel = AtomicBool::new(false);
-        let got = super::BARK_CLEAN.download_from(&[bad, &url], &dir, &cancel, |_, _| {}).expect("download");
+        let quick = [0u64, 0, 0, 0, 0];
+        let model = &super::BARK_CLEAN;
+        let url = |p: &str| format!("{base}/{p}");
+        let retries = std::sync::Mutex::new(Vec::new());
+        let on = |p: super::Progress| {
+            if let super::Progress::Retrying { reason, .. } = p {
+                retries.lock().unwrap().push(reason);
+            }
+        };
+
+        // Drops twice, resumes, and lands whole: every byte fetched once, near enough.
+        let got = model.download_from(&[&url("drop")], &dir, &AtomicBool::new(false), on, &quick).expect("resumed download");
         assert!(super::files(&got).is_ok());
         crate::engine::Transducer::load(&got).expect("load");
-        let cancel = AtomicBool::new(false);
-        let err = super::BARK_CLEAN
-            .download_from(&[&url], &dir.join("again"), &cancel, |done, _| {
-                if done > 10_000_000 {
-                    cancel.store(true, Ordering::Relaxed);
-                }
-            })
-            .unwrap_err();
-        assert_eq!(err, super::CANCELLED);
-        let left: Vec<_> = std::fs::read_dir(dir.join("again")).unwrap().flatten().collect();
-        assert!(left.is_empty(), "a cancelled download left {left:?}");
+        assert_eq!(retries.lock().unwrap().len(), 2, "two drops, two retries");
+        let log = ureq::get(&url("log")).call().unwrap().into_body().read_to_string().unwrap();
+        let sent: u64 = log.lines().filter_map(|l| l.rsplit(' ').next()?.parse::<u64>().ok()).sum();
+        let size = std::fs::metadata(std::env::var("HEYRA_TEST_ARCHIVE").unwrap()).unwrap().len();
+        assert!(sent < size + size / 10, "resumed, not restarted: sent {sent} for {size}");
+        let left: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(left, [model.dir], "nothing left behind: {left:?}");
+        std::fs::remove_dir_all(&got).unwrap();
 
-        // Two downloads of the same model at once (chosen, replaced, chosen again) both
-        // finish, and a partial file from a run that died is cleared.
-        let both = dir.join("both");
-        std::fs::create_dir_all(&both).unwrap();
-        std::fs::write(both.join("underdog-bark-3.0-clean-int8.99999-0.tar.bz2.part"), b"old").unwrap();
-        let results: Vec<_> = std::thread::scope(|scope| {
-            let runs: Vec<_> = (0..2)
-                .map(|_| scope.spawn(|| super::BARK_CLEAN.download_from(&[&url], &both, &AtomicBool::new(false), |_, _| {})))
-                .collect();
-            runs.into_iter().map(|r| r.join().unwrap()).collect()
-        });
-        for r in &results {
-            assert!(super::files(r.as_ref().expect("both downloads finish")).is_ok());
-        }
-        let names: Vec<String> =
-            std::fs::read_dir(&both).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
-        assert_eq!(names, ["underdog-bark-3.0-clean-int8"], "leftovers: {names:?}");
+        // Not there: a plain failure, after trying the next source.
+        let err = model.download_from(&[&url("missing")], &dir, &AtomicBool::new(false), |_| {}, &quick).unwrap_err();
+        assert_eq!(err, super::Failure::Unavailable);
+        let got = model.download_from(&[&url("missing"), &url("ok")], &dir, &AtomicBool::new(false), |_| {}, &quick).expect("second source");
+        std::fs::remove_dir_all(&got).unwrap();
+
+        // Damaged every time: tried once more from scratch, then a plain failure, no partial kept.
+        let err = model.download_from(&[&url("corrupt")], &dir, &AtomicBool::new(false), |_| {}, &quick).unwrap_err();
+        assert_eq!(err, super::Failure::Damaged);
+        assert!(std::fs::read_dir(&dir).unwrap().next().is_none(), "a damaged partial is removed");
+
+        // Offline: the retries run out, and a partial is kept to resume later.
+        let err = model.download_from(&["http://127.0.0.1:9/x"], &dir, &AtomicBool::new(false), |_| {}, &[0, 0]).unwrap_err();
+        assert!(matches!(err, super::Failure::Network(_)), "{err:?}");
+        println!("offline says: {}", err.message());
+
+        // Cancelled partway: stops, and says so.
+        let cancel = AtomicBool::new(false);
+        let err = model
+            .download_from(&[&url("ok")], &dir, &cancel, |p| {
+                if let super::Progress::Bytes(done, _) = p {
+                    if done > 10_000_000 {
+                        cancel.store(true, Ordering::Relaxed);
+                    }
+                }
+            }, &quick)
+            .unwrap_err();
+        assert_eq!(err, super::Failure::Cancelled);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
