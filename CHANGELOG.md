@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Choose your voice model: Bark 3.0 Clean, Bark 3.0 or Parakeet v3, on the welcome
+  screen and in Settings. Or point Heyra at a folder with a sherpa-onnx model of your own.
+- Switching downloads the new model while the old one keeps working.
+- Fixed: some takes came back empty. The speech engine is now sherpa-onnx 1.13.8.
+
 ## 0.3.10
 
 - Fixed a freeze: clicking the dot while another app was active could lock Heyra up.
