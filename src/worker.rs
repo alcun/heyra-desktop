@@ -106,9 +106,9 @@ impl Loader {
                             let mb = |b: u64| b / 1_000_000;
                             s.progress = (total > 0).then(|| done as f32 / total as f32);
                             say(&mut s, if total > 0 {
-                                format!("Downloading the speech model, once: {} of {} MB", mb(done), mb(total))
+                                format!("Downloading the voice model, once: {} of {} MB", mb(done), mb(total))
                             } else {
-                                format!("Downloading the speech model, once: {} MB", mb(done))
+                                format!("Downloading the voice model, once: {} MB", mb(done))
                             });
                         });
                         if !cancel.load(Ordering::Relaxed) {
@@ -118,7 +118,7 @@ impl Loader {
                     }
                     (None, Choice::Folder(dir)) => return Err(format!("{} isn't there any more", dir.display())),
                 };
-                say(&mut state.lock().unwrap(), "Loading the speech model…".into());
+                say(&mut state.lock().unwrap(), "Loading the voice model…".into());
                 let engine = Transducer::load(&dir)?;
                 store::log(&format!("model loaded: {}", dir.display()));
                 Ok(Box::new(engine))
@@ -133,7 +133,7 @@ impl Loader {
     }
 
     fn join(self) -> Result<Box<dyn Engine>, String> {
-        self.handle.join().unwrap_or_else(|_| Err("the speech model crashed while loading".into()))
+        self.handle.join().unwrap_or_else(|_| Err("the voice model crashed while loading".into()))
     }
 }
 
@@ -284,7 +284,7 @@ fn finish(state: &Shared, engine: &mut dyn Engine, recorder: &Recorder, paste: b
 pub fn run(state: Shared, cmds: Receiver<Cmd>) {
     {
         let mut s = state.lock().unwrap();
-        s.message = "Loading the speech model…".into();
+        s.message = "Loading the voice model…".into();
     }
     // The model downloads and loads on its own thread, so the microphone can open
     // (and the welcome window's orb follow your voice) as soon as it's allowed.

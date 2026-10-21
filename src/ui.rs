@@ -818,13 +818,13 @@ impl Main {
             .flex()
             .flex_col()
             .gap_2()
-            .child(label("SPEECH MODEL"))
+            .child(label("VOICE MODEL"))
             .child(div().flex().flex_col().children(rows))
             .children(error.map(|e| div().text_sm().text_color(rgb(REC)).child(e)))
             .child(div().flex().pt_1().gap_2().child(choose).child(button("data", "OPEN DATA FOLDER").on_click(|_, _, _| {
                 let _ = std::process::Command::new("open").arg(store::dir()).spawn();
             })))
-            .child(hint("A folder of your own needs a sherpa-onnx transducer: encoder, decoder and joiner .onnx files and tokens.txt."))
+            .child(hint("Your own: a folder with a sherpa-onnx transducer (encoder, decoder and joiner .onnx, and tokens.txt)."))
             .child(hint("Your voice and your words never leave this Mac."))
     }
 }
