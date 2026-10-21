@@ -171,6 +171,17 @@ fn main() {
     if args.len() == 3 && args[1] == "--file" {
         return transcribe_file(&args[2]);
     }
+    // Load a model folder and transcribe a second of silence: run as a separate process
+    // by `model::check_folder`, so a model the engine can't run can't take Heyra down.
+    if args.len() == 3 && args[1] == "--check-model" {
+        let mut engine = Transducer::load(std::path::Path::new(&args[2])).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(2)
+        });
+        let _ = engine::Engine::transcribe(&mut engine, 16_000, &vec![0.0; 16_000]);
+        println!("ok");
+        return;
+    }
     if args.len() == 4 && args[1] == "--orb-png" {
         // `heyra --orb-png out.png <voice 0..1 | writing>`: one GPU orb frame, timed.
         let gpu = gpu_orb::Gpu::new().expect("metal");

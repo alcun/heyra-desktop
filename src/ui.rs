@@ -820,12 +820,13 @@ impl Main {
             cx.spawn(async move |_, _| {
                 let Ok(Ok(Some(paths))) = paths.await else { return };
                 let Some(dir) = paths.into_iter().next() else { return };
-                match model::files(&dir) {
-                    Ok(_) => {
+                // Loading the model to check it takes a moment: not on the window's thread.
+                std::thread::spawn(move || match model::check_folder(&dir) {
+                    Ok(()) => {
                         let _ = cmds.send(Cmd::UseModel(Choice::Folder(dir)));
                     }
-                    Err(e) => state.lock().unwrap().model_error = Some((Choice::Folder(dir), format!("That folder has no model Heyra can use: {e}"))),
-                }
+                    Err(e) => state.lock().unwrap().model_error = Some((Choice::Folder(dir), e)),
+                });
             })
             .detach();
         }));

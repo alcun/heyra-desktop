@@ -129,6 +129,10 @@ impl Loader {
                     }
                     (None, Choice::Folder(dir)) => return Err(format!("{} isn't there any more", dir.display())),
                 };
+                // A folder of the person's choosing is tried in a separate process first.
+                if let Choice::Folder(_) = &choice {
+                    crate::model::check_folder(&dir)?;
+                }
                 say("Loading the voice model…".into());
                 let engine = Transducer::load(&dir)?;
                 store::log(&format!("model loaded: {}", dir.display()));

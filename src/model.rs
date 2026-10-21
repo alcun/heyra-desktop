@@ -125,6 +125,29 @@ impl Choice {
     }
 }
 
+/// Whether a folder's model runs: Heyra loads it in a separate process first, so a model
+/// using something the engine can't run fails there instead of taking Heyra down.
+pub fn check_folder(dir: &Path) -> Result<(), String> {
+    files(dir)?;
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let out = std::process::Command::new(exe)
+        .arg("--check-model")
+        .arg(dir)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let said = String::from_utf8_lossy(&out.stderr).lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").to_string();
+    crate::store::log(&format!("model folder {} failed its check: {said}", dir.display()));
+    Err(if out.status.code() == Some(2) {
+        format!("That model didn't load: {said}")
+    } else {
+        "That model uses something Heyra's engine can't run.".into()
+    })
+}
+
 /// The four files sherpa-onnx needs for a transducer such as Parakeet.
 pub struct Files {
     pub encoder: PathBuf,
