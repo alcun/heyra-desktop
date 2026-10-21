@@ -165,14 +165,23 @@ impl Model {
     /// Download, verify and unpack. `progress(done, total)` is called as bytes
     /// arrive; setting `cancel` stops it.
     pub fn download(&self, cancel: &AtomicBool, progress: impl Fn(u64, u64)) -> Result<PathBuf, String> {
-        let dir = models_dir();
-        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        self.download_from(self.sources, &models_dir(), cancel, progress)
+    }
+
+    fn download_from(
+        &self,
+        sources: &[&str],
+        dir: &Path,
+        cancel: &AtomicBool,
+        progress: impl Fn(u64, u64),
+    ) -> Result<PathBuf, String> {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         let archive = dir.join(format!("{}.tar.bz2.part", self.dir));
         let mut last_error = String::new();
-        for url in self.sources {
+        for url in sources {
             match fetch(url, &archive, self.sha256, cancel, &progress) {
                 Ok(()) => {
-                    let unpacked = unpack(&archive, &dir);
+                    let unpacked = unpack(&archive, dir);
                     let _ = fs::remove_file(&archive);
                     unpacked?;
                     let target = dir.join(self.dir);
@@ -244,6 +253,33 @@ fn unpack(archive: &Path, into: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// Serve the Bark archive locally (HEYRA_TEST_ARCHIVE_URL), then download,
+    /// verify, unpack and load it; and check a cancelled download stops.
+    #[test]
+    fn downloads_bark_from_a_mirror() {
+        let Ok(url) = std::env::var("HEYRA_TEST_ARCHIVE_URL") else { return };
+        let dir = std::env::temp_dir().join("heyra-model-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let bad = "http://127.0.0.1:9/nothing-here.tar.bz2";
+        let cancel = AtomicBool::new(false);
+        let got = super::BARK_CLEAN.download_from(&[bad, &url], &dir, &cancel, |_, _| {}).expect("download");
+        assert!(super::files(&got).is_ok());
+        crate::engine::Transducer::load(&got).expect("load");
+        let cancel = AtomicBool::new(false);
+        let err = super::BARK_CLEAN
+            .download_from(&[&url], &dir.join("again"), &cancel, |done, _| {
+                if done > 10_000_000 {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            })
+            .unwrap_err();
+        assert_eq!(err, super::CANCELLED);
+        assert!(!dir.join("again").join("underdog-bark-3.0-clean-int8.tar.bz2.part").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn reads_the_macs_language() {
         let language = super::first_language().expect("a preferred language");
