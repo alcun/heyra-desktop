@@ -3,50 +3,48 @@
 
 use std::path::Path;
 
-use sherpa_rs::transducer::{TransducerConfig, TransducerRecognizer};
+use sherpa_onnx::{OfflineRecognizer, OfflineRecognizerConfig, OfflineTransducerModelConfig};
 
 pub trait Engine: Send {
     fn transcribe(&mut self, sample_rate: u32, samples: &[f32]) -> String;
 }
 
 /// NVIDIA Parakeet TDT 0.6B v3 (int8) through sherpa-onnx: the model Heyra uses.
-pub struct Parakeet(TransducerRecognizer);
+pub struct Parakeet(OfflineRecognizer);
 
 impl Parakeet {
     pub fn load(dir: &Path) -> Result<Self, String> {
-        let file = |name: &str| dir.join(name).to_string_lossy().into_owned();
-        let config = TransducerConfig {
+        let file = |name: &str| Some(dir.join(name).to_string_lossy().into_owned());
+        let mut config = OfflineRecognizerConfig::default();
+        config.model_config.transducer = OfflineTransducerModelConfig {
             encoder: file("encoder.int8.onnx"),
             decoder: file("decoder.int8.onnx"),
             joiner: file("joiner.int8.onnx"),
-            tokens: file("tokens.txt"),
-            model_type: "nemo_transducer".into(),
-            decoding_method: "greedy_search".into(),
-            sample_rate: 16_000,
-            feature_dim: 80,
-            num_threads: 4,
-            ..Default::default()
         };
-        TransducerRecognizer::new(config)
+        config.model_config.tokens = file("tokens.txt");
+        config.model_config.model_type = Some("nemo_transducer".into());
+        config.model_config.num_threads = 4;
+        config.decoding_method = Some("greedy_search".into());
+        OfflineRecognizer::create(&config)
             .map(Self)
-            .map_err(|e| format!("could not load model from {}: {e}", dir.display()))
+            .ok_or_else(|| format!("could not load model from {}", dir.display()))
     }
 }
 
 impl Engine for Parakeet {
     fn transcribe(&mut self, sample_rate: u32, samples: &[f32]) -> String {
-        self.0.transcribe(sample_rate, samples).trim().to_string()
+        let stream = self.0.create_stream();
+        stream.accept_waveform(sample_rate as i32, samples);
+        self.0.decode(&stream);
+        stream.get_result().map(|r| r.text.trim().to_string()).unwrap_or_default()
     }
 }
 
-// TransducerRecognizer wraps a C pointer that sherpa-onnx lets one thread use at a time.
-unsafe impl Send for Parakeet {}
-
-/// Parakeet aborts the whole process past about six and a half minutes of
-/// audio, and its memory grows fast well before that, so long takes go in in
-/// pieces of about a minute, each cut at the quietest moment near its end.
-const PIECE_SECS: f32 = 60.0;
-const LOOK_BACK_SECS: f32 = 10.0;
+/// Parakeet skips stretches of speech in a long input (a 7-minute take in
+/// 60-second pieces lost a quarter of its words), so long takes go in in
+/// pieces of about 15 seconds, each cut at the quietest moment near its end.
+const PIECE_SECS: f32 = 15.0;
+const LOOK_BACK_SECS: f32 = 5.0;
 
 pub fn transcribe_long(engine: &mut dyn Engine, sample_rate: u32, samples: &[f32]) -> String {
     let rate = sample_rate as f32;

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.11
+
+- Fixed: some takes came back empty, or missed whole sentences. The speech engine is now
+  sherpa-onnx 1.13.8.
+- Fixed: long hands-free takes lost words. They now go in 15-second pieces.
+
 ## 0.3.10
 
 - Fixed a freeze: clicking the dot while another app was active could lock Heyra up.

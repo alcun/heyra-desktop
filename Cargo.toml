@@ -1,6 +1,6 @@
 [package]
 name = "heyra"
-version = "0.3.10"
+version = "0.3.11"
 edition = "2024"
 description = "Hold fn, talk, let go: local push-to-talk dictation for macOS"
 license = "MIT"
@@ -25,7 +25,7 @@ raw-window-handle = "0.6"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"
-sherpa-rs = { version = "0.6.8", default-features = false, features = ["download-binaries", "static"] }
+sherpa-onnx = "=1.13.8"
 tar = "0.4.46"
 tray-icon = "0.26.0"
 ureq = "3"
