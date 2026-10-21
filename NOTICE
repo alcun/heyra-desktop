@@ -6,15 +6,22 @@ Speech model: NVIDIA Parakeet TDT 0.6B v3
   Heyra downloads the int8 ONNX conversion published by the sherpa-onnx project,
   unmodified, and mirrors that file on this repository's releases.
 
-Speech models: Underdog Bark 3.0 Clean and Bark 3.0 Plus, by Conway Research
+Speech model: Underdog Bark 3.0 Clean, by Conway Research
   https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Clean
-  https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Plus
   Licensed CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).
   They derive from nvidia/parakeet-tdt-0.6b-v3 ((c) NVIDIA Corporation) and
   moondream/parakeet-ultra ((c) Moondream), both CC BY 4.0.
   Changes: Heyra unpacks Conway Research's model.bark weights, places them in
   sherpa-onnx's ONNX export of Parakeet TDT 0.6B v3 and quantizes them to int8,
   as sherpa-onnx does for Parakeet. The weights are otherwise unmodified.
+
+Speech model: Phonon-2, by Fermion Research
+  https://huggingface.co/FermionResearch/Phonon-2
+  Licensed CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Derived from
+  nvidia/parakeet-tdt-0.6b-v3 ((c) NVIDIA Corporation, CC BY 4.0).
+  Changes: Heyra unpacks Fermion Research's official model.fermion container,
+  places the weights in sherpa-onnx's ONNX export of Parakeet TDT 0.6B v3 and
+  quantizes them to int8. The weights are otherwise unmodified.
 
 sherpa-onnx (speech runtime) - Apache License 2.0
   https://github.com/k2-fsa/sherpa-onnx
