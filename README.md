@@ -105,6 +105,8 @@ Pick one on the welcome screen, or any time in Settings:
 
 - **Bark 3.0 Clean** (399 MB): English. Leaves out "um", "uh", false starts and
   repeats, so you get what you meant. The default on a Mac set to English.
+- **Bark 3.0 Plus** (398 MB): English, every word, fewer mistakes than Parakeet on
+  meetings and calls.
 - **Parakeet v3** (487 MB): every word, in English and 24 European languages. The
   default otherwise.
 - **Your own**: Settings → Use a model folder. Any sherpa-onnx transducer (encoder,
@@ -113,12 +115,13 @@ Pick one on the welcome screen, or any time in Settings:
 Switching downloads the new model while the current one keeps working. Models are
 downloaded from this repository's releases and checked against a SHA-256 before use.
 
-Bark 3.0 Clean is [Underdog's](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Clean)
-fine-tune of NVIDIA's Parakeet TDT 0.6B v3, converted for sherpa-onnx. Measured with
+Bark 3.0 Clean and Plus are [Underdog's](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Clean)
+fine-tunes of NVIDIA's Parakeet TDT 0.6B v3, converted for sherpa-onnx. Measured with
 [heyra-bench](https://github.com/alcun/heyra-bench) on 800 clips (% of words wrong):
 
 | | Average | Off the cuff, against what was meant |
 |---|--:|--:|
+| Bark 3.0 Plus | 7.6 | 17.7 |
 | Parakeet v3 | 8.1 | 17.5 |
 | Bark 3.0 Clean | 9.9 | 6.1 |
 

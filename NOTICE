@@ -6,9 +6,9 @@ Speech model: NVIDIA Parakeet TDT 0.6B v3
   Heyra downloads the int8 ONNX conversion published by the sherpa-onnx project,
   unmodified, and mirrors that file on this repository's releases.
 
-Speech models: Underdog Bark 3.0 Clean and Bark 3.0, by Conway Research
+Speech models: Underdog Bark 3.0 Clean and Bark 3.0 Plus, by Conway Research
   https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Clean
-  https://huggingface.co/ConwayResearch/Underdog-Bark-3.0
+  https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Plus
   Licensed CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).
   They derive from nvidia/parakeet-tdt-0.6b-v3 ((c) NVIDIA Corporation) and
   moondream/parakeet-ultra ((c) Moondream), both CC BY 4.0.
