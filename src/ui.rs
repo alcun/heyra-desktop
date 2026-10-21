@@ -15,6 +15,7 @@ use gpui::{
 };
 
 use crate::setup::{self, Mic};
+use crate::model::{self, Choice};
 use crate::store;
 use crate::worker::{Cmd, KEEP_MIC_READY, MUTE_WHILE_TALKING, Phase, Shared};
 use std::sync::atomic::Ordering;
@@ -61,7 +62,7 @@ fn hint(text: impl Into<SharedString>) -> Div {
     div().text_sm().text_color(rgb(SLATE)).child(text.into())
 }
 
-fn button(id: &'static str, text: &'static str) -> Stateful<Div> {
+fn button(id: impl Into<gpui::ElementId>, text: &'static str) -> Stateful<Div> {
     div()
         .id(id)
         .px_3()
@@ -363,7 +364,7 @@ impl Main {
                     } else {
                         String::new()
                     }))
-                    .child(label("PARAKEET TDT 0.6B · ON THIS MAC")),
+                    .child(label(format!("{} · ON THIS MAC", self.state.lock().unwrap().model.name().to_uppercase()))),
             );
 
         let cell = |name: &'static str, value: String| {
@@ -621,6 +622,7 @@ impl Main {
                     }))
                     .child(hint("Off: the mic opens only while you talk, so the orange mic light goes out, but the first moment can be missed. Plugged-in mics, like the FX mic, always stay ready.")),
             )
+            .child(self.models(cx))
             .child(
                 section("PUSH TO TALK")
                     .child(div().text_sm().text_color(rgb(CREAM)).child("Hold fn, talk, let go."))
@@ -701,14 +703,123 @@ impl Main {
                     })),
             )
             .child(section("START").child(switch("login", "Open Heyra at login", crate::login::enabled(), crate::login::set)))
-            .child(
-                section("SPEECH MODEL")
-                    .child(div().text_sm().text_color(rgb(CREAM)).child("NVIDIA Parakeet TDT 0.6B v3, running on this Mac."))
-                    .child(hint("Your voice and your words never leave this machine."))
-                    .child(div().flex().pt_1().child(button("data", "OPEN DATA FOLDER").on_click(|_, _, _| {
-                        let _ = std::process::Command::new("open").arg(store::dir()).spawn();
-                    }))),
-            )
+    }
+
+    /// The speech models: Heyra's list, then a folder of your own. Clicking one
+    /// downloads it if needed and switches; the current one works until then.
+    fn models(&self, cx: &mut Context<Self>) -> Div {
+        let (in_use, switching, progress, error) = {
+            let s = self.state.lock().unwrap();
+            (s.model.clone(), s.switching.clone(), s.progress, s.model_error.clone())
+        };
+        let row = |id: (&'static str, usize), name: String, note: String, selected: bool| {
+            div()
+                .id(id)
+                .flex()
+                .items_center()
+                .gap_3()
+                .py_2()
+                .border_b_1()
+                .border_color(rgb(HAIR))
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(PANEL)))
+                .child(
+                    div()
+                        .flex_none()
+                        .size(px(9.))
+                        .rounded_full()
+                        .border_1()
+                        .border_color(rgb(if selected { GOLD } else { DIM }))
+                        .when(selected, |d| d.bg(rgb(GOLD))),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .child(div().text_sm().text_color(rgb(if selected { CREAM } else { SLATE })).child(name))
+                        .child(div().text_xs().text_color(rgb(DIM)).child(note)),
+                )
+        };
+        let mut rows = Vec::new();
+        for (i, m) in model::ALL.iter().enumerate() {
+            let choice = Choice::Listed(m.id);
+            let using = in_use == choice;
+            let loading = switching.as_ref() == Some(&choice);
+            let here = m.find().is_some();
+            let (status, color) = if using {
+                ("IN USE".to_string(), GOLD)
+            } else if loading {
+                (progress.map_or("LOADING".into(), |p| format!("DOWNLOADING {}%", (p * 100.) as u32)), GOLD)
+            } else if here {
+                ("ON THIS MAC".into(), DIM)
+            } else {
+                (format!("{} MB", m.mb), DIM)
+            };
+            let cmds = self.cmds.clone();
+            rows.push(
+                row(("model", i), m.name.into(), m.note.into(), using)
+                    .on_click(move |_, _, _| {
+                        let _ = cmds.send(Cmd::UseModel(Choice::Listed(m.id)));
+                    })
+                    .child(div().font_family(MONO).text_xs().text_color(rgb(color)).child(status))
+                    .when(here && !using && !loading, |d| {
+                        d.child(button(("remove", i), "REMOVE").on_click(move |_, _, cx| {
+                            cx.stop_propagation();
+                            if let Err(e) = m.remove() {
+                                store::log(&format!("couldn't remove {}: {e}", m.name));
+                            }
+                        }))
+                    })
+                    .into_any_element(),
+            );
+        }
+        // A folder of your own: shown once chosen, and picked with the button below.
+        let folder = match (&in_use, &switching) {
+            (_, Some(c @ Choice::Folder(_))) | (c @ Choice::Folder(_), _) => Some(c.clone()),
+            _ => None,
+        };
+        if let Some(Choice::Folder(dir)) = &folder {
+            let using = in_use == Choice::Folder(dir.clone());
+            rows.push(
+                row(("model", 99), Choice::Folder(dir.clone()).name(), dir.display().to_string(), using)
+                    .child(div().font_family(MONO).text_xs().text_color(rgb(GOLD)).child(if using { "IN USE" } else { "LOADING" }))
+                    .into_any_element(),
+            );
+        }
+        let (cmds, state) = (self.cmds.clone(), self.state.clone());
+        let choose = button("model-folder", "USE A MODEL FOLDER…").on_click(cx.listener(move |_, _, _, cx| {
+            let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
+                files: false,
+                directories: true,
+                multiple: false,
+                prompt: Some("Use this model".into()),
+            });
+            let (cmds, state) = (cmds.clone(), state.clone());
+            cx.spawn(async move |_, _| {
+                let Ok(Ok(Some(paths))) = paths.await else { return };
+                let Some(dir) = paths.into_iter().next() else { return };
+                match model::files(&dir) {
+                    Ok(_) => {
+                        let _ = cmds.send(Cmd::UseModel(Choice::Folder(dir)));
+                    }
+                    Err(e) => state.lock().unwrap().model_error = Some(e),
+                }
+            })
+            .detach();
+        }));
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(label("SPEECH MODEL"))
+            .child(div().flex().flex_col().children(rows))
+            .children(error.map(|e| div().text_sm().text_color(rgb(REC)).child(e)))
+            .child(div().flex().pt_1().gap_2().child(choose).child(button("data", "OPEN DATA FOLDER").on_click(|_, _, _| {
+                let _ = std::process::Command::new("open").arg(store::dir()).spawn();
+            })))
+            .child(hint("A folder of your own needs a sherpa-onnx transducer: encoder, decoder and joiner .onnx files and tokens.txt."))
+            .child(hint("Your voice and your words never leave this Mac."))
     }
 }
 
