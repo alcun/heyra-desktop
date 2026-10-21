@@ -27,9 +27,9 @@ pub struct Model {
 pub const PARAKEET: Model = Model {
     id: "parakeet-v3",
     name: "Parakeet v3",
-    note: "English and 24 European languages",
+    note: "Every word, in English and 24 European languages",
     dir: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
-    mb: 465,
+    mb: 487,
     sha256: "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf",
     sources: &[
         "https://github.com/alcun/heyra-desktop/releases/download/model-parakeet-v3/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
@@ -37,11 +37,40 @@ pub const PARAKEET: Model = Model {
     ],
 };
 
-pub const ALL: [&Model; 1] = [&PARAKEET];
+pub const BARK_CLEAN: Model = Model {
+    id: "bark-3.0-clean",
+    name: "Bark 3.0 Clean",
+    note: "English, without the um and uh",
+    dir: "underdog-bark-3.0-clean-int8",
+    mb: 399,
+    sha256: "2ef1a099b74a52cf28189b6f4bee407e8232065d4d615f6ecabcd687d66c2eb3",
+    sources: &["https://github.com/alcun/heyra-desktop/releases/download/model-bark-3.0-clean/underdog-bark-3.0-clean-int8.tar.bz2"],
+};
 
-/// The model a new install starts with.
+pub const ALL: [&Model; 2] = [&BARK_CLEAN, &PARAKEET];
+
+/// The model a new install starts with: Bark Clean on a Mac set to English,
+/// Parakeet (which finds the language itself) on any other.
 pub fn default() -> &'static Model {
-    &PARAKEET
+    if first_language().is_none_or(|l| l.starts_with("en")) { &BARK_CLEAN } else { &PARAKEET }
+}
+
+/// The Mac's first preferred language, such as "en-GB".
+fn first_language() -> Option<String> {
+    use core_foundation::array::{CFArray, CFArrayRef};
+    use core_foundation::base::TCFType;
+    use core_foundation::string::CFString;
+    unsafe extern "C" {
+        fn CFLocaleCopyPreferredLanguages() -> CFArrayRef;
+    }
+    let languages: CFArray<CFString> = unsafe {
+        let array = CFLocaleCopyPreferredLanguages();
+        if array.is_null() {
+            return None;
+        }
+        CFArray::wrap_under_create_rule(array)
+    };
+    languages.iter().next().map(|l| l.to_string())
 }
 
 pub fn by_id(id: &str) -> Option<&'static Model> {
@@ -57,11 +86,13 @@ pub enum Choice {
 
 impl Choice {
     /// From settings.json; a model no longer listed falls back to the default.
+    /// Installs from before the choice existed keep Parakeet, which they already have.
     pub fn saved() -> Choice {
         let settings = crate::store::load_settings();
         match (settings.model.as_deref(), settings.model_folder) {
             (Some("folder"), Some(dir)) => Choice::Folder(dir),
             (Some(id), _) if by_id(id).is_some() => Choice::Listed(by_id(id).unwrap().id),
+            (None, _) if settings.onboarded => Choice::Listed(PARAKEET.id),
             _ => Choice::Listed(default().id),
         }
     }
@@ -209,4 +240,14 @@ fn unpack(archive: &Path, into: &Path) -> Result<(), String> {
     tar::Archive::new(bzip2::read::BzDecoder::new(file))
         .unpack(into)
         .map_err(|e| format!("couldn't unpack the model: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn reads_the_macs_language() {
+        let language = super::first_language().expect("a preferred language");
+        assert!(language.len() >= 2, "{language}");
+        println!("first language: {language}, default: {}", super::default().name);
+    }
 }
