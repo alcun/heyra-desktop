@@ -213,6 +213,12 @@ pub struct Settings {
     /// Off, it opens only while recording, so macOS's mic light goes out.
     #[serde(default = "yes")]
     pub keep_mic_ready: bool,
+    /// The speech model's id, or "folder" for `model_folder`. None: the default.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// A folder of sherpa-onnx transducer files the person picked.
+    #[serde(default)]
+    pub model_folder: Option<std::path::PathBuf>,
 }
 
 fn yes() -> bool {
@@ -221,7 +227,7 @@ fn yes() -> bool {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { mic: None, keep_last_clip: false, login_offered: false, button: None, sounds: true, mute_while_talking: false, onboarded: false, keep_mic_ready: true }
+        Self { mic: None, keep_last_clip: false, login_offered: false, button: None, sounds: true, mute_while_talking: false, onboarded: false, keep_mic_ready: true, model: None, model_folder: None }
     }
 }
 

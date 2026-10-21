@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::engine::{Engine, Parakeet};
+use crate::engine::{Engine, Transducer};
+use crate::model::Choice;
 use crate::hotkey::Key;
 use crate::record::Recorder;
 use crate::sound::Cue;
@@ -49,6 +50,12 @@ pub struct State {
     pub ting_note: Option<String>,
     /// A short note shown above the dot: a quiet lead word, the news, and when.
     pub toast: Option<(String, String, Instant)>,
+    /// The speech model in use (or loading, at the start).
+    pub model: Choice,
+    /// A model being downloaded or loaded to take over from `model`.
+    pub switching: Option<Choice>,
+    /// Why the last switch didn't happen.
+    pub model_error: Option<String>,
 }
 
 pub type Shared = Arc<Mutex<State>>;
@@ -62,6 +69,68 @@ pub enum Cmd {
     Finish,
     /// Press a key (with cmd when set): the TING's buttons.
     Press(u16, bool),
+    /// Listen with this model from now on: download it if needed, then switch.
+    UseModel(Choice),
+}
+
+/// A model downloading and loading on its own thread.
+struct Loader {
+    choice: Choice,
+    cancel: Arc<AtomicBool>,
+    handle: std::thread::JoinHandle<Result<Box<dyn Engine>, String>>,
+}
+
+impl Loader {
+    fn start(state: &Shared, choice: Choice) -> Loader {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let handle = {
+            let (state, choice, cancel) = (state.clone(), choice.clone(), cancel.clone());
+            std::thread::spawn(move || -> Result<Box<dyn Engine>, String> {
+                // Messages are for the first load; a switch shows in Settings, not the dot.
+                let say = |s: &mut State, text: String| {
+                    if s.phase == Phase::Loading {
+                        s.message = text;
+                    }
+                };
+                let dir = match (crate::model::find(&choice), &choice) {
+                    (Some(dir), _) => dir,
+                    (None, Choice::Listed(id)) => {
+                        let model = crate::model::by_id(id).ok_or("that model isn't on the list")?;
+                        let progress_state = state.clone();
+                        let got = model.download(&cancel, move |done, total| {
+                            let mut s = progress_state.lock().unwrap();
+                            let mb = |b: u64| b / 1_000_000;
+                            s.progress = (total > 0).then(|| done as f32 / total as f32);
+                            say(&mut s, if total > 0 {
+                                format!("Downloading the speech model, once: {} of {} MB", mb(done), mb(total))
+                            } else {
+                                format!("Downloading the speech model, once: {} MB", mb(done))
+                            });
+                        });
+                        if !cancel.load(Ordering::Relaxed) {
+                            state.lock().unwrap().progress = None;
+                        }
+                        got?
+                    }
+                    (None, Choice::Folder(dir)) => return Err(format!("{} isn't there any more", dir.display())),
+                };
+                say(&mut state.lock().unwrap(), "Loading the speech model…".into());
+                let engine = Transducer::load(&dir)?;
+                store::log(&format!("model loaded: {}", dir.display()));
+                Ok(Box::new(engine))
+            })
+        };
+        Loader { choice, cancel, handle }
+    }
+
+    /// Stop it; the thread finishes on its own and its result is dropped.
+    fn cancel(self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+
+    fn join(self) -> Result<Box<dyn Engine>, String> {
+        self.handle.join().unwrap_or_else(|_| Err("the speech model crashed while loading".into()))
+    }
 }
 
 pub fn new_state() -> Shared {
@@ -83,6 +152,9 @@ pub fn new_state() -> Shared {
         toast: None,
         ting_disk: None,
         ting_note: None,
+        model: Choice::saved(),
+        switching: None,
+        model_error: None,
     }))
 }
 
@@ -212,33 +284,27 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
     }
     // The model downloads and loads on its own thread, so the microphone can open
     // (and the welcome window's orb follow your voice) as soon as it's allowed.
-    let loader = {
-        let state = state.clone();
-        std::thread::spawn(move || -> Result<Box<dyn Engine>, String> {
-            let dir = match crate::model::find() {
-                Some(dir) => dir,
-                None => {
-                    let progress_state = state.clone();
-                    let got = crate::model::download(move |done, total| {
-                        let mut s = progress_state.lock().unwrap();
-                        let mb = |b: u64| b / 1_000_000;
-                        s.progress = (total > 0).then(|| done as f32 / total as f32);
-                        s.message = if total > 0 {
-                            format!("Downloading the speech model, once: {} of {} MB", mb(done), mb(total))
-                        } else {
-                            format!("Downloading the speech model, once: {} MB", mb(done))
-                        };
-                    });
-                    state.lock().unwrap().progress = None;
-                    got?
-                }
-            };
-            state.lock().unwrap().message = "Loading the speech model…".into();
-            Ok(Box::new(Parakeet::load(&dir)?))
-        })
-    };
+    // The welcome window can change the model while it downloads.
+    let mut loader = Loader::start(&state, state.lock().unwrap().model.clone());
+    let mut queue: Vec<Cmd> = Vec::new();
     let mut recorder: Option<Recorder> = None;
-    while recorder.is_none() || !loader.is_finished() {
+    while recorder.is_none() || !loader.handle.is_finished() {
+        while let Ok(cmd) = cmds.try_recv() {
+            match cmd {
+                Cmd::UseModel(choice) if choice != loader.choice => {
+                    store::log(&format!("model chosen: {}", choice.name()));
+                    choice.save();
+                    {
+                        let mut s = state.lock().unwrap();
+                        s.model = choice.clone();
+                        s.progress = None;
+                    }
+                    std::mem::replace(&mut loader, Loader::start(&state, choice)).cancel();
+                }
+                Cmd::UseModel(_) => {}
+                cmd => queue.push(cmd),
+            }
+        }
         if recorder.is_none() && state.lock().unwrap().mic_go {
             let mic = state.lock().unwrap().mic.clone();
             recorder = Some(match open_mic(&state, mic.as_deref()) {
@@ -253,10 +319,11 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
     }
     let mut recorder = recorder.unwrap();
     let mut engine = match loader.join() {
-        Ok(Ok(engine)) => engine,
-        Ok(Err(e)) => return fail(&state, e),
-        Err(_) => return fail(&state, "the speech model crashed while loading".into()),
+        Ok(engine) => engine,
+        Err(e) => return fail(&state, e),
     };
+    // A model downloading to take over, while the current one keeps working.
+    let mut switch: Option<Loader> = None;
     let ready = |state: &Shared| {
         let mut s = state.lock().unwrap();
         s.phase = Phase::Ready;
@@ -272,7 +339,6 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
     let mut ignore_up = false;
     let mut pressed_at = Instant::now();
     let mut last_tap: Option<Instant> = None;
-    let mut queue: Vec<Cmd> = Vec::new();
     let mut mute = Mute::default();
     MUTE_WHILE_TALKING.store(store::load_settings().mute_while_talking, Ordering::Relaxed);
     KEEP_MIC_READY.store(store::load_settings().keep_mic_ready, Ordering::Relaxed);
@@ -401,6 +467,21 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                 finish(&state, engine.as_mut(), &recorder, true, &mut mute);
                 ready(&state);
             }
+            Cmd::UseModel(choice) => {
+                if let Some(old) = switch.take() {
+                    old.cancel();
+                }
+                let mut s = state.lock().unwrap();
+                s.model_error = None;
+                s.progress = None;
+                s.switching = None;
+                if choice != s.model {
+                    store::log(&format!("switching model to {}", choice.name()));
+                    s.switching = Some(choice.clone());
+                    drop(s);
+                    switch = Some(Loader::start(&state, choice));
+                }
+            }
             Cmd::SetMic(name) if !recording => {
                 drop(recorder);
                 store::save_settings(&store::Settings { mic: name.clone(), ..store::load_settings() });
@@ -423,6 +504,27 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
             }
             _ => {}
         }
+        }
+        // A new model takes over between takes, once it's loaded.
+        if !recording && switch.as_ref().is_some_and(|l| l.handle.is_finished()) {
+            let loader = switch.take().unwrap();
+            let choice = loader.choice.clone();
+            let result = loader.join();
+            let mut s = state.lock().unwrap();
+            s.switching = None;
+            s.progress = None;
+            match result {
+                Ok(new) => {
+                    engine = new;
+                    choice.save();
+                    s.toast = Some(("Using".into(), choice.name(), Instant::now()));
+                    s.model = choice;
+                }
+                Err(e) => {
+                    store::log(&format!("model switch failed: {e}"));
+                    s.model_error = Some(e);
+                }
+            }
         }
         // A tap never mutes; a take that's really talking does.
         if recording && MUTE_WHILE_TALKING.load(Ordering::Relaxed) && pressed_at.elapsed() > TAP {

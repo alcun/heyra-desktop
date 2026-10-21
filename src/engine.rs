@@ -1,5 +1,5 @@
-//! Speech engines. Parakeet runs anywhere (macOS, Windows, Linux); an Apple
-//! engine can slot in later behind the same trait.
+//! Speech engines. A sherpa-onnx transducer (Parakeet, Bark) runs anywhere
+//! (macOS, Windows, Linux); an Apple engine can slot in later behind the same trait.
 
 use std::path::Path;
 
@@ -9,17 +9,18 @@ pub trait Engine: Send {
     fn transcribe(&mut self, sample_rate: u32, samples: &[f32]) -> String;
 }
 
-/// NVIDIA Parakeet TDT 0.6B v3 (int8) through sherpa-onnx: the model Heyra uses.
-pub struct Parakeet(TransducerRecognizer);
+/// A NeMo transducer through sherpa-onnx: Parakeet TDT 0.6B v3 and the models built on it.
+pub struct Transducer(TransducerRecognizer);
 
-impl Parakeet {
+impl Transducer {
     pub fn load(dir: &Path) -> Result<Self, String> {
-        let file = |name: &str| dir.join(name).to_string_lossy().into_owned();
+        let files = crate::model::files(dir)?;
+        let file = |path: &Path| path.to_string_lossy().into_owned();
         let config = TransducerConfig {
-            encoder: file("encoder.int8.onnx"),
-            decoder: file("decoder.int8.onnx"),
-            joiner: file("joiner.int8.onnx"),
-            tokens: file("tokens.txt"),
+            encoder: file(&files.encoder),
+            decoder: file(&files.decoder),
+            joiner: file(&files.joiner),
+            tokens: file(&files.tokens),
             model_type: "nemo_transducer".into(),
             decoding_method: "greedy_search".into(),
             sample_rate: 16_000,
@@ -33,14 +34,14 @@ impl Parakeet {
     }
 }
 
-impl Engine for Parakeet {
+impl Engine for Transducer {
     fn transcribe(&mut self, sample_rate: u32, samples: &[f32]) -> String {
         self.0.transcribe(sample_rate, samples).trim().to_string()
     }
 }
 
 // TransducerRecognizer wraps a C pointer that sherpa-onnx lets one thread use at a time.
-unsafe impl Send for Parakeet {}
+unsafe impl Send for Transducer {}
 
 /// Parakeet aborts the whole process past about six and a half minutes of
 /// audio, and its memory grows fast well before that, so long takes go in in

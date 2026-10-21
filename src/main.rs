@@ -1,6 +1,6 @@
 //! Heyra: hold fn (or squeeze a TING) and talk; let go and the words are pasted
 //! where your cursor is. Speech is turned into text on this machine with
-//! Parakeet, the model Heyra uses. Nothing leaves it.
+//! the speech model of the person's choosing. Nothing leaves it.
 
 mod engine;
 mod hotkey;
@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{App, Application};
 
-use engine::Parakeet;
+use engine::Transducer;
 use worker::{Cmd, Phase};
 
 /// `heyra --file clip.wav` prints a transcript: a quick check of the engine.
@@ -46,8 +46,8 @@ fn transcribe_file(path: &str) {
         .map(|f| f.iter().sum::<f32>() / channels as f32)
         .collect();
     let started = std::time::Instant::now();
-    let dir = model::find().expect("no model yet: open Heyra once to download it");
-    let mut engine = Parakeet::load(&dir).expect("load model");
+    let dir = model::find(&model::Choice::saved()).expect("no model yet: open Heyra once to download it");
+    let mut engine = Transducer::load(&dir).expect("load model");
     let loaded = started.elapsed().as_secs_f32();
     let started = std::time::Instant::now();
     let text = engine::transcribe_long(&mut engine, spec.sample_rate, &mono);
@@ -257,8 +257,10 @@ fn main() {
     }
     if args.len() == 2 && args[1] == "--fetch-model" {
         // Exercise the first-run download without the window.
-        let result = model::find().map(Ok).unwrap_or_else(|| {
-            model::download(|done, total| eprint!("\r{} / {} MB   ", done / 1_000_000, total / 1_000_000))
+        let model = model::default();
+        let result = model.find().map(Ok).unwrap_or_else(|| {
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            model.download(&cancel, |done, total| eprint!("\r{} / {} MB   ", done / 1_000_000, total / 1_000_000))
         });
         eprintln!();
         match result {
