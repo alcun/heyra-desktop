@@ -4,8 +4,8 @@
 
 Hold **fn**, talk, let go. Your words are typed wherever your cursor is.
 
-Heyra turns speech into text on your own Mac with NVIDIA's Parakeet model. It goes
-online once, to download the model on first launch. After that your voice and your
+Heyra turns speech into text on your own Mac. It goes online once, to download the
+voice model on first launch. After that your voice and your
 words never leave the machine. No account, no subscription.
 
 > **Proof of concept.** macOS on Apple Silicon only, for now.
@@ -34,7 +34,7 @@ words never leave the machine. No account, no subscription.
 2. Open Heyra from Applications. It also opens at login from now on (Settings can turn
    that off).
 3. Heyra opens on Home with a short setup list. It ticks each step off as you go:
-   - the speech model downloads (about 490 MB, once)
+   - the voice model downloads (about 400 MB, once)
    - allow the microphone
    - turn on Heyra under Privacy & Security → Accessibility, so it can hear fn and type
    - set Keyboard → Press 🌐 key to → **Do nothing**, so fn doesn't also open emoji
@@ -94,13 +94,36 @@ for Accessibility again after each rebuild.
 ## How it works
 
 - [GPUI](https://www.gpui.rs) for the interface (the framework Zed is built with).
-- [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) runs Parakeet TDT 0.6B v3 (int8)
-  in the app itself. 25 languages.
+- [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) runs the voice model in the app
+  itself, int8 on the CPU.
 - A macOS event tap watches for fn, `cpal` records the microphone, and the text is
   pasted with a real ⌘V.
 
-The model is downloaded from this repository's releases, with the sherpa-onnx release
-as a fallback, and checked against a SHA-256 before use.
+## Voice models
+
+Pick one on the welcome screen, or any time in Settings:
+
+- **Bark 3.0 Clean** (399 MB): English. Leaves out "um", "uh", false starts and
+  repeats, so you get what you meant. The default on a Mac set to English.
+- **Parakeet v3** (487 MB): every word, in English and 24 European languages. The
+  default otherwise.
+- **Your own**: Settings → Use a model folder. Any sherpa-onnx transducer (encoder,
+  decoder and joiner `.onnx` files and `tokens.txt`).
+
+Switching downloads the new model while the current one keeps working. Models are
+downloaded from this repository's releases and checked against a SHA-256 before use.
+
+Bark 3.0 Clean is [Underdog's](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Clean)
+fine-tune of NVIDIA's Parakeet TDT 0.6B v3, converted for sherpa-onnx. Measured with
+[heyra-bench](https://github.com/alcun/heyra-bench) on 800 clips (% of words wrong):
+
+| | Average | Off the cuff, against what was meant |
+|---|--:|--:|
+| Parakeet v3 | 8.1 | 17.5 |
+| Bark 3.0 Clean | 9.9 | 6.1 |
+
+Bark Clean's average is higher because those test transcripts keep every "um", which it
+leaves out on purpose.
 
 ## Credits and licence
 
