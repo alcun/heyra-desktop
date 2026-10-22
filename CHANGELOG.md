@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
 - Choose your voice model on the welcome screen or in Settings: Bark 3.0 Clean (English,
   without the "um"s), the default on a Mac set to English; Fluid Speech Mini (English,
