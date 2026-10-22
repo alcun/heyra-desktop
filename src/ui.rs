@@ -777,7 +777,7 @@ impl Main {
             });
             let cmds = self.cmds.clone();
             rows.push(
-                row(("model", i), m.name.into(), m.note.into(), using)
+                row(("model", i), m.name.into(), m.note.into(), switching.as_ref().map_or(using, |c| *c == choice))
                     .on_click(move |_, _, _| {
                         let _ = cmds.send(Cmd::UseModel(Choice::Listed(m.id)));
                     })
@@ -801,9 +801,10 @@ impl Main {
         if let Some(choice @ Choice::Folder(dir)) = &folder {
             let using = in_use == *choice;
             let (status, color) = status(choice, if using { ("IN USE".into(), GOLD) } else { ("LOADING".into(), GOLD) });
+            let picked = switching.as_ref().map_or(using, |c| c == choice);
             let (cmds, choice) = (self.cmds.clone(), choice.clone());
             rows.push(
-                row(("model", 99), choice.name(), dir.display().to_string(), using)
+                row(("model", 99), choice.name(), dir.display().to_string(), picked)
                     .on_click(move |_, _, _| {
                         let _ = cmds.send(Cmd::UseModel(choice.clone()));
                     })
@@ -852,8 +853,7 @@ impl Main {
             .child(div().flex().pt_1().gap_2().child(choose).child(button("data", "OPEN DATA FOLDER").on_click(|_, _, _| {
                 let _ = std::process::Command::new("open").arg(store::dir()).spawn();
             })))
-            .child(hint("Your own: a folder with a sherpa-onnx transducer (encoder, decoder and joiner .onnx, and tokens.txt)."))
-            .child(hint("Your voice and your words never leave this Mac."))
+            .child(hint("Your own: a sherpa-onnx transducer folder (encoder, decoder, joiner .onnx and tokens.txt)."))
     }
 }
 
