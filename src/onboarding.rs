@@ -48,7 +48,7 @@ pub struct Onboarding {
 
 pub fn open(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
     cx.activate(true); // before the window: see ui::open_main
-    let bounds = Bounds::centered(None, size(px(460.), px(580.)), cx);
+    let bounds = Bounds::centered(None, size(px(560.), px(520.)), cx);
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -179,62 +179,88 @@ fn line(text: &str) -> gpui::Div {
 }
 
 impl Onboarding {
-    /// The listed models, one picked already. Picking another starts its download now.
+    /// The listed models as three tiles, one picked already. Picking another starts its download now.
     fn models(&self, cx: &mut Context<Self>) -> gpui::Div {
-        let chosen = self.state.lock().unwrap().model.clone();
-        let rows = crate::model::ALL.iter().enumerate().map(|(i, m)| {
+        // The pick shows at once; the model behind it loads in its own time.
+        let chosen = {
+            let s = self.state.lock().unwrap();
+            s.switching.clone().unwrap_or_else(|| s.model.clone())
+        };
+        let tiles = crate::model::ALL.iter().enumerate().map(|(i, m)| {
             let selected = chosen == Choice::Listed(m.id);
+            let picked_for_you = m.id == crate::model::default().id;
             let cmds = self.cmds.clone();
+            let tone = if selected { GOLD } else { CREAM };
             div()
                 .id(("model", i))
-                .w(px(340.))
-                .px(px(14.))
-                .py(px(9.))
+                .relative()
+                .w(px(156.))
+                .h(px(124.))
+                .p(px(14.))
                 .flex()
-                .items_center()
-                .gap(px(12.))
-                .rounded(px(10.))
+                .flex_col()
+                .rounded(px(14.))
                 .border_1()
-                .border_color(alpha(if selected { GOLD } else { CREAM }, if selected { 0.55 } else { 0.10 }))
-                .bg(alpha(if selected { GOLD } else { CREAM }, if selected { 0.08 } else { 0.0 }))
+                .border_color(alpha(tone, if selected { 0.6 } else { 0.10 }))
+                .bg(alpha(tone, if selected { 0.09 } else { 0.025 }))
                 .cursor_pointer()
-                .hover(move |d| d.bg(alpha(if selected { GOLD } else { CREAM }, if selected { 0.12 } else { 0.04 })))
+                .hover(move |d| d.bg(alpha(tone, if selected { 0.12 } else { 0.05 })).border_color(alpha(tone, if selected { 0.7 } else { 0.2 })))
                 .on_click(cx.listener(move |_, _, _, cx| {
                     let _ = cmds.send(Cmd::UseModel(Choice::Listed(m.id)));
                     cx.notify();
                 }))
+                // Top row: the pick on the left, the recommendation on the right.
                 .child(
                     div()
-                        .flex_none()
-                        .size(px(9.))
-                        .rounded_full()
-                        .border_1()
-                        .border_color(alpha(if selected { GOLD } else { SLATE }, 0.9))
-                        .when(selected, |d| d.bg(rgb(GOLD))),
-                )
-                .child(
-                    div()
-                        .flex_1()
+                        .h(px(14.))
                         .flex()
-                        .flex_col()
+                        .items_center()
+                        .justify_between()
                         .child(
                             div()
-                                .text_size(px(13.5))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(rgb(if selected { CREAM } else { SLATE }))
-                                .child(m.name),
+                                .size(px(12.))
+                                .rounded_full()
+                                .border_1()
+                                .border_color(alpha(if selected { GOLD } else { SLATE }, if selected { 0.9 } else { 0.45 }))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .when(selected, |d| {
+                                    d.child(div().size(px(6.)).rounded_full().bg(rgb(GOLD)).with_animation(
+                                        gpui::ElementId::Name(format!("pick-{}", m.id).into()),
+                                        gpui::Animation::new(Duration::from_millis(380)).with_easing(gpui::ease_out_quint()),
+                                        |d, t| d.opacity(t).size(px(1. + 5. * t)),
+                                    ))
+                                }),
                         )
-                        .child(div().text_size(px(12.)).text_color(alpha(SLATE, 0.85)).child(m.note)),
+                        .when(picked_for_you, |d| {
+                            d.child(div().font_family(MONO).text_size(px(9.5)).text_color(alpha(GOLD, 0.9)).child("FOR YOU"))
+                        }),
                 )
+                // Names and notes sit on the bottom, so a name that wraps doesn't push the rest out of line.
+                .child(div().flex_1())
                 .child(
                     div()
-                        .font_family(MONO)
-                        .text_size(px(10.5))
-                        .text_color(alpha(SLATE, 0.8))
-                        .child(if std::ptr::eq(*m, crate::model::default()) { "PICKED FOR YOU".to_string() } else { format!("{} MB", m.mb) }),
+                        .text_size(px(14.5))
+                        .line_height(px(19.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(if selected { CREAM } else { SLATE }))
+                        .child(m.name),
+                )
+                .child(div().pt(px(3.)).text_size(px(12.)).text_color(alpha(SLATE, 0.85)).child(m.note))
+                .child(div().pt(px(10.)).font_family(MONO).text_size(px(10.5)).text_color(alpha(SLATE, 0.7)).child(format!("{} MB", m.mb)))
+                // In one after another.
+                .with_animation(
+                    ("model-in", i),
+                    gpui::Animation::new(Duration::from_millis(560 + 90 * i as u64)).with_easing(gpui::ease_out_quint()),
+                    move |d, t| {
+                        let lead = 90. * i as f32 / (560. + 90. * i as f32);
+                        let t = ((t - lead) / (1. - lead)).clamp(0., 1.);
+                        d.opacity(t).mt(px(12. * (1. - t)))
+                    },
                 )
         });
-        div().pt(px(6.)).flex().flex_col().gap(px(8.)).children(rows)
+        div().pt(px(8.)).flex().gap(px(10.)).children(tiles)
     }
 }
 
@@ -286,8 +312,8 @@ impl Render for Onboarding {
                 None,
             ),
             Step::Model => (
-                "Voice model".into(),
-                "It turns your voice into text, on this Mac.\nChange it any time in Settings.".into(),
+                "Pick a voice model".into(),
+                "Runs on this Mac. Change it any time.".into(),
                 Some("Continue"),
                 None,
             ),

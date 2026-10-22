@@ -27,7 +27,7 @@ pub struct Model {
 pub const PARAKEET: Model = Model {
     id: "parakeet-v3",
     name: "Parakeet v3",
-    note: "Every word, in English and 24 European languages",
+    note: "25 languages",
     dir: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
     mb: 487,
     sha256: "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf",
@@ -40,7 +40,7 @@ pub const PARAKEET: Model = Model {
 pub const BARK_CLEAN: Model = Model {
     id: "bark-3.0-clean",
     name: "Bark 3.0 Clean",
-    note: "English, without the um and uh",
+    note: "English, no um or uh",
     dir: "underdog-bark-3.0-clean-int8",
     mb: 399,
     sha256: "2ef1a099b74a52cf28189b6f4bee407e8232065d4d615f6ecabcd687d66c2eb3",
