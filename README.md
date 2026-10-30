@@ -1,78 +1,107 @@
-<p align="center"><img src="docs/orb.webp" width="220" alt="The Heyra orb: light swirling inside a dark sphere"></p>
+<p align="center"><img src="docs/banner.webp" alt="Heyra: free, open source voice to text that never leaves your Mac" width="100%"></p>
 
-# Heyra
+<p align="center">Hold fn, talk, let go. It types where your cursor is.</p>
 
-Hold **fn**, talk, let go. Your words are typed wherever your cursor is.
+<p align="center">
+  <a href="https://github.com/alcun/heyra-desktop/releases/latest">Download</a> ·
+  <a href="https://heyra.alcun.dev">Website</a> ·
+  <a href="https://heyra.alcun.dev/bench">Bench</a>
+</p>
 
-Heyra turns speech into text on your own Mac. It goes online once, to download the
-voice model on first launch. After that your voice and your
-words never leave the machine. No account, no subscription.
+```sh
+brew install --cask alcun/tap/heyra
+```
 
-> **Proof of concept.** macOS on Apple Silicon only, for now.
+**0.5 s** from letting go to text · **6.1%** of words wrong, off the cuff · **25** languages · **0 bytes** of your voice leave your Mac
 
-![Heyra](docs/screenshot.png)
+Heyra runs the voice model on your own Mac. It goes online once, to download the model,
+and after that it works with Wi-Fi off. No account, no subscription, MIT licensed.
+Apple Silicon only, for now.
+
+![Heyra's Home with the voice model menu open](docs/home.webp)
 
 ## Install
 
-1. With [Homebrew](https://brew.sh):
+With [Homebrew](https://brew.sh), as above. No admin rights on a work Mac? Install
+into your own Applications folder instead, for this and every upgrade:
 
-   ```sh
-   brew install --cask alcun/tap/heyra
-   ```
+```sh
+echo 'export HOMEBREW_CASK_OPTS="--appdir=~/Applications"' >> ~/.zshrc && source ~/.zshrc
+brew install --cask alcun/tap/heyra
+```
 
-   No admin rights (a work Mac)? Install into your own Applications folder instead, for
-   this and every upgrade:
+Or download `Heyra.zip` from [Releases](https://github.com/alcun/heyra-desktop/releases),
+unzip it and move Heyra to Applications. It isn't notarized by Apple yet, so the first
+time macOS blocks it: System Settings → Privacy & Security → Open Anyway.
 
-   ```sh
-   echo 'export HOMEBREW_CASK_OPTS="--appdir=~/Applications"' >> ~/.zshrc && source ~/.zshrc
-   brew install --cask alcun/tap/heyra
-   ```
+Open Heyra. Home shows a short setup list and ticks each step off as you go:
 
-   Or download `Heyra.zip` from [Releases](https://github.com/alcun/heyra-desktop/releases),
-   unzip it and move **Heyra** to Applications. It isn't notarized by Apple yet, so the
-   first time macOS blocks it: System Settings → Privacy & Security → **Open Anyway**.
-2. Open Heyra from Applications. It also opens at login from now on (Settings can turn
-   that off).
-3. Heyra opens on Home with a short setup list. It ticks each step off as you go:
-   - the voice model downloads (about 400 MB, once)
-   - allow the microphone
-   - turn on Heyra under Privacy & Security → Accessibility, so it can hear fn and type
-   - set Keyboard → Press 🌐 key to → **Do nothing**, so fn doesn't also open emoji
-4. Click into any text box, hold fn, say something, let go.
+1. The voice model downloads, about 400 MB, once
+2. Allow the microphone
+3. Turn Heyra on under Privacy & Security → Accessibility, so it can hear fn and type
+4. Set Keyboard → Press 🌐 key to → Do nothing, so fn doesn't also open emoji
 
-Heyra lives in the menu bar and as a small dark dot at the bottom of the screen. Click
-the dot, or use the menu bar, to open your history and settings.
+Then click into any text box, hold fn, say something and let go.
 
-## What it does
+Installed with Homebrew, Heyra keeps itself up to date: once a day it checks for a new
+release, upgrades through Homebrew and restarts into it when you're not talking.
 
-- **Push to talk.** Hold fn. A glowing orb at the bottom of the screen shows it's
-  listening. Let go and the text is pasted in, and your clipboard text is put back.
-  Pressing another key while holding fn (fn+arrow, fn+delete), or Esc, cancels the take.
-  A soft click marks the start and end of each take (Settings can turn it off).
-- **Voice commands.** End a take with "press enter" and Heyra presses it after pasting.
-  "New line" and "new paragraph" break the text; a take of just "scratch that" undoes the
-  last one. In a terminal, takes don't end in a full stop.
-- **Any button.** Settings → Another button: any key, key combo or extra mouse button
-  also works as push-to-talk, alongside fn.
-- **Hands-free.** Double-tap fn to start, tap fn once (or the ✓ by the orb) to stop and
-  paste. The ✕ stops without pasting; the text is still kept in History.
-- **Long takes.** Talk for up to 30 minutes in one go; long takes are written a minute
-  at a time, about 5 s of writing per minute of speech.
-- **Updates.** `brew upgrade --cask heyra`.
-- **Fast.** Six seconds of speech becomes text in about 0.4 s on an M-series Mac.
-- **Light.** About 2% of one CPU core at rest and 5% while you talk. The model stays
-  loaded (about 1.3 GB of memory) so it's ready the moment you press fn.
-- **History.** Every take is kept on your Mac. Click one to copy it again.
-- **Dictionary.** Fix words it mishears: `a cappy bar => capybara`.
-- **Any microphone.** Plug one in and Heyra switches to it, with a note above the dot.
-  Settings lists your mics with a live level. Optionally mutes the Mac while you talk.
-- **FX mic (TING).** A Teenage Engineering EP-2350 is push-to-talk with nothing else
-  installed: choose its line-in as the mic and squeeze to talk. The bottom button presses
-  Enter, the middle one undoes. Once per mic, plug it in over USB-C and choose Settings →
-  Set up this FX mic: Heyra puts a small script and four tones on its disk (from
-  [ting-wispr](https://github.com/alcun/ting-wispr)), backing up its files first.
+## Using it
+
+Heyra lives in the menu bar and as a small dot above the Dock. Hold fn and the dot
+grows into the orb. Your words show above it while you talk, and when you let go they're
+pasted where your cursor is, with your clipboard put back.
+
+<img src="docs/words-box.webp" alt="The words box, showing a sentence as it's spoken" width="560">
+
+If there's nowhere to type, Heyra keeps the take on a card for you to copy.
+
+<img src="docs/copy-card.webp" alt="A card reading Nowhere to type, with the take and a Copy button" width="460">
+
+Press another key while you hold fn, or Esc, to cancel a take. Double-tap fn to talk
+hands-free, and tap it again to stop. Any key, key combo or extra mouse button can be
+push-to-talk too, in Settings.
+
+Say "press enter" at the end of a take and Heyra presses it after pasting. "New line"
+and "new paragraph" break the text, and a take of just "scratch that" undoes the last
+one. In a terminal, takes don't end in a full stop.
+
+Every take is kept in History on your Mac; click one to copy it again. The Dictionary
+fixes words it mishears, like `a cappy bar => capybara`. Plug in any microphone and
+Heyra switches to it. Takes can run to 30 minutes.
+
+Heyra writes while you talk, so the wait after you let go stays around half a second
+however long you spoke. At rest it uses about 2% of one CPU core. The model stays
+loaded, about 1.3 GB of memory, so it's ready the moment you press fn.
+
+A Teenage Engineering EP-2350 works as a push-to-talk mic with nothing else installed:
+choose its line-in, squeeze to talk, and the bottom button presses Enter. Settings → Set
+up this FX mic puts a small script and four tones on it, from
+[ting-wispr](https://github.com/alcun/ting-wispr), after backing up its files.
 
 Everything Heyra keeps is in `~/Library/Application Support/Heyra`.
+
+## Voice models
+
+Pick one on Home or in Settings. Switching downloads the new model while the current
+one keeps working, and every model is checked against a SHA-256 before use.
+
+| Model | Size | For | Average | Off the cuff |
+|---|--:|---|--:|--:|
+| Bark 3.0 Clean | 399&nbsp;MB | English, leaves out "um", "uh" and false starts | 9.9 | **6.1** |
+| Fluid Speech Mini | 312&nbsp;MB | English, every word | **6.6** | 17.3 |
+| Parakeet v3 | 487&nbsp;MB | English and 24 European languages | 8.1 | 17.5 |
+
+Words wrong in 100, fewer is better. "Off the cuff" is scored against what the speaker meant.
+Measured with [heyra-bench](https://github.com/alcun/heyra-bench) on 800 public clips;
+the full results are on the [Bench](https://heyra.alcun.dev/bench). Bark Clean's
+average is higher because those transcripts keep every "um", which it leaves out on
+purpose. You can also use your own model: Settings → Use a model folder, with any
+sherpa-onnx transducer (encoder, decoder and joiner `.onnx` files and `tokens.txt`).
+
+Bark 3.0 Clean ([Underdog](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Clean))
+and Fluid Speech Mini ([FluidVoice](https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-onnx))
+are fine-tunes of NVIDIA's Parakeet TDT 0.6B v3, converted for sherpa-onnx.
 
 ## Build from source
 
@@ -86,50 +115,16 @@ open target/Heyra.app
 ```
 
 `bundle.sh` signs with your Apple Development certificate if you have one, so macOS
-keeps your permissions between builds. Without one it signs ad hoc, and macOS will ask
-for Accessibility again after each rebuild.
+keeps your permissions between builds. Without one it signs ad hoc, and macOS asks for
+Accessibility again after each rebuild. `target/release/heyra --file clip.wav` prints a
+transcript, to test the engine.
 
-`target/release/heyra --file clip.wav` prints a transcript, to test the engine.
+The interface is [GPUI](https://www.gpui.rs), the framework Zed is built with.
+[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) runs the model in the app itself,
+int8 on the CPU. A macOS event tap watches for fn, `cpal` records the microphone, and
+the text is pasted with a real ⌘V.
 
-## How it works
+## Licence
 
-- [GPUI](https://www.gpui.rs) for the interface (the framework Zed is built with).
-- [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) runs the voice model in the app
-  itself, int8 on the CPU.
-- A macOS event tap watches for fn, `cpal` records the microphone, and the text is
-  pasted with a real ⌘V.
-
-## Voice models
-
-Pick one on the welcome screen, or any time in Settings:
-
-- **Bark 3.0 Clean** (399 MB): English. Leaves out "um", "uh", false starts and
-  repeats, so you get what you meant. The default on a Mac set to English.
-- **Fluid Speech Mini** (312 MB): English, every word. The fewest mistakes of any model
-  here, and good with other voices in the room.
-- **Parakeet v3** (487 MB): every word, in English and 24 European languages. The
-  default otherwise.
-- **Your own**: Settings → Use a model folder. Any sherpa-onnx transducer (encoder,
-  decoder and joiner `.onnx` files and `tokens.txt`).
-
-Switching downloads the new model while the current one keeps working. Models are
-downloaded from this repository's releases and checked against a SHA-256 before use.
-
-Bark 3.0 Clean ([Underdog](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Clean))
-and Fluid Speech Mini ([FluidVoice](https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-onnx)) are
-fine-tunes of NVIDIA's Parakeet TDT 0.6B v3, converted for sherpa-onnx. Measured with
-[heyra-bench](https://github.com/alcun/heyra-bench) on 800 clips (% of words wrong):
-
-| | Average | Off the cuff, against what was meant |
-|---|--:|--:|
-| Fluid Speech Mini | 6.6 | 17.3 |
-| Parakeet v3 | 8.1 | 17.5 |
-| Bark 3.0 Clean | 9.9 | 6.1 |
-
-Bark Clean's average is higher because those test transcripts keep every "um", which it
-leaves out on purpose.
-
-## Credits and licence
-
-Heyra is MIT licensed. The model, runtime and fonts have their own licences; see
+Heyra is MIT licensed. The models, runtime and fonts have their own licences; see
 [NOTICE](NOTICE).
