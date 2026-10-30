@@ -1,7 +1,7 @@
 //! Heyra's window and the edge gauge.
 //!
 //! Design: a field recorder's faceplate. Graphite ground, cream readouts, gold for
-//! anything live, slate for labels. Plex Mono for every number and label, Plex Sans
+//! anything live, slate for labels. The mono for every number and label, the sans
 //! for your words. One segmented level meter, shared by the deck and the edge gauge.
 
 use std::sync::mpsc::Sender;
@@ -137,7 +137,7 @@ fn readout(text: impl Into<SharedString>) -> Div {
     div().font_family(MONO).text_color(rgb(p().ink)).child(text.into())
 }
 
-/// Outland set wider: GPUI has no letter-spacing, so a thin space between letters.
+/// The display face set wider: GPUI has no letter-spacing, so a thin space between letters.
 fn tracked(text: &str) -> String {
     let mut out = String::new();
     for (i, c) in text.chars().enumerate() {
@@ -391,7 +391,7 @@ pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
     // click on the dot doesn't activate Heyra), GPUI's window-focus handler deadlocks.
     cx.activate(true);
     // Roomy by default, as big as Wispr Flow's, but never more than 90% of the screen.
-    let (mut w, mut h) = (1180., 800.);
+    let (mut w, mut h) = (1320., 880.);
     if let Some(screen) = cx.primary_display().map(|d| d.bounds().size) {
         w = f32::min(w, f32::from(screen.width) * 0.9);
         h = f32::min(h, f32::from(screen.height) * 0.9);
@@ -1331,7 +1331,7 @@ impl Render for Main {
                         .pt(px(56.))
                         .px(px(64.))
                         .when(!own_scroll, |d| d.overflow_y_scroll().pb(px(64.)))
-                        .child(div().w_full().min_w_0().max_w(px(840.)).when(own_scroll, |d| d.h_full()).child(page))
+                        .child(div().w_full().min_w_0().max_w(px(920.)).when(own_scroll, |d| d.h_full()).child(page))
                 }),
             )
     }
@@ -1427,7 +1427,7 @@ const TOAST_MARGIN: f32 = 36.;
 
 /// `above`: how far above the dot's centre the pill sits.
 pub fn open_toast(cx: &mut App, centre: (f64, f64), above: f32, toast: Toast) -> Option<gpui::WindowHandle<Toast>> {
-    // Generous for Plex Sans at this size; the pill itself sizes to its words.
+    // Generous for the sans at this size; the pill itself sizes to its words.
     let chars = (toast.lead.chars().count() + toast.text.chars().count()) as f32;
     let width = chars * 7.4 + 70. + TOAST_MARGIN * 2.;
     let height = TOAST_HEIGHT + TOAST_MARGIN * 2.;
@@ -1579,7 +1579,7 @@ impl Render for Caption {
             self.text.clone()
         };
         // Sized to the words, up to two lines, growing up from the bottom. The width is
-        // set from the length (Plex Sans at 15 px is about 7.7 px a character): a text left
+        // set from the length (the sans at 15 px is about 7.7 px a character): a text left
         // to find its own width is measured unwrapped and spills over the card.
         let width = (tail.chars().count() as f32 * 7.7 + 44.).clamp(120., CAPTION_WIDTH);
         let card = div()
