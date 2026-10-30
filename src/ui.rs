@@ -1487,7 +1487,7 @@ impl Render for Main {
                         .pt(px(56.))
                         .px(px(64.))
                         .when(!own_scroll, |d| d.overflow_y_scroll().pb(px(64.)))
-                        .child(div().w_full().min_w_0().max_w(px(920.)).when(own_scroll, |d| d.h_full()).child(page))
+                        .child(div().w_full().min_w_0().max_w(px(920.)).mx_auto().when(own_scroll, |d| d.h_full()).child(page))
                 }),
             )
     }
