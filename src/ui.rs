@@ -1276,7 +1276,8 @@ pub fn fade(window: &Window, visible: bool) {
 }
 
 const CAPTION_WIDTH: f32 = 560.;
-const CAPTION_HEIGHT: f32 = 76.;
+/// Room for the card: it sizes itself to its words (two lines at most), from the bottom.
+const CAPTION_HEIGHT: f32 = 120.;
 
 /// `above`: how far above the orb's centre the caption's middle sits.
 pub fn open_caption(cx: &mut App, centre: (f64, f64), above: f32, caption: Caption) -> Option<gpui::WindowHandle<Caption>> {
@@ -1308,8 +1309,8 @@ pub fn open_caption(cx: &mut App, centre: (f64, f64), above: f32, caption: Capti
 
 impl Render for Caption {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        // The end of what's been said: about two lines, from a word's start.
-        const SHOWN: usize = 150;
+        // The end of what's been said: what fits in two lines, from a word's start.
+        const SHOWN: usize = 112;
         let chars = self.text.chars().count();
         let tail: String = if chars > SHOWN {
             let cut: String = self.text.chars().skip(chars - SHOWN).collect();
@@ -1317,13 +1318,15 @@ impl Render for Caption {
         } else {
             self.text.clone()
         };
-        // Sized to the words, up to two lines, growing up from the bottom.
+        // Sized to the words, up to two lines, growing up from the bottom. The width is
+        // set from the length (Plex Sans at 15 px is about 7.7 px a character): a text left
+        // to find its own width is measured unwrapped and spills over the card.
+        let width = (tail.chars().count() as f32 * 7.7 + 44.).clamp(120., CAPTION_WIDTH);
         let card = div()
-            .max_w(px(CAPTION_WIDTH))
-            .max_h(px(CAPTION_HEIGHT))
-            .px(px(18.))
-            .py(px(12.))
-            .rounded(px(14.))
+            .w(px(width))
+            .px(px(20.))
+            .py(px(14.))
+            .rounded(px(16.))
             .bg(gpui::linear_gradient(
                 180.,
                 gpui::linear_color_stop(alpha(0x30323c, 0.96), 0.),
@@ -1337,13 +1340,9 @@ impl Render for Caption {
                 blur_radius: px(14.),
                 spread_radius: px(0.),
             }])
-            .flex()
-            .flex_col()
-            .justify_end()
-            .overflow_hidden()
             .font_family(SANS)
             .text_size(px(15.))
-            .line_height(px(22.))
+            .line_height(px(24.))
             .text_color(rgb(CREAM))
             .child(tail);
         div().size_full().flex().items_end().justify_center().pb(px(TOAST_MARGIN)).child(card)

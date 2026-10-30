@@ -353,6 +353,16 @@ fn main() {
     }
 
     let state = worker::new_state();
+    // `heyra --preview-words`: the app as usual, with the words box up, two lines' worth.
+    if args.iter().any(|a| a == "--preview-words") {
+        let state = state.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(5));
+            let mut s = state.lock().unwrap();
+            s.draft = "So the plan for Thursday is that we meet the venue people at ten, walk the space, and then decide on the layout before lunch with Priya.".into();
+            s.draft_until = Some(Instant::now() + Duration::from_secs(20));
+        });
+    }
     // `heyra --preview-held`: the app as usual, with a take offered to copy.
     if args.iter().any(|a| a == "--preview-held") {
         let state = state.clone();
@@ -585,7 +595,7 @@ fn main() {
                     }
                     // The words so far, above the orb; redrawn only when they change.
                     if caption.is_none() && !draft.is_empty() && let Some(centre) = orb.centre() {
-                        caption = ui::open_caption(cx, centre, 118., ui::Caption { text: String::new() }).map(|h| (h, String::new()));
+                        caption = ui::open_caption(cx, centre, 140., ui::Caption { text: String::new() }).map(|h| (h, String::new()));
                         if let Some((h, _)) = &caption {
                             let _ = h.update(cx, |_, window, _| ui::fade(window, false));
                         }
