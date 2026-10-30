@@ -137,6 +137,18 @@ fn readout(text: impl Into<SharedString>) -> Div {
     div().font_family(MONO).text_color(rgb(p().ink)).child(text.into())
 }
 
+/// Outland set wider: GPUI has no letter-spacing, so a thin space between letters.
+fn tracked(text: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in text.chars().enumerate() {
+        if i > 0 {
+            out.push('\u{2009}');
+        }
+        out.push(c);
+    }
+    out
+}
+
 fn title(text: &'static str) -> Div {
     div()
         .font_family(DISPLAY)
@@ -144,7 +156,7 @@ fn title(text: &'static str) -> Div {
         .line_height(px(34.))
         .font_weight(FontWeight::BOLD)
         .text_color(rgb(p().ink))
-        .child(text)
+        .child(tracked(text))
 }
 
 fn hint(text: impl Into<SharedString>) -> Div {
@@ -1235,7 +1247,7 @@ impl Render for Main {
                                     .text_color(rgb(p().ink))
                                     .whitespace_nowrap()
                                     .opacity(shown)
-                                    .child("Heyra"),
+                                    .child(tracked("Heyra")),
                             ),
                     )
                     .child(self.nav("nav-home", "icons/home.svg", "HOME", Page::Home, shown, cx))
