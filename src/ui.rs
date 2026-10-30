@@ -36,7 +36,7 @@ pub const REC: u32 = 0xe0795a; // recording light
 
 pub const SANS: &str = "Space Grotesk";
 pub const MONO: &str = "Martian Mono";
-/// Titles and the wordmark: Outland, after the signage in the 1981 film.
+/// Titles and the wordmark.
 pub const DISPLAY: &str = "Outland";
 
 
@@ -130,7 +130,7 @@ fn mark(height: f32) -> Div {
 
 /// Small uppercase mono label, the faceplate's lettering.
 fn label(text: impl Into<SharedString>) -> Div {
-    div().font_family(MONO).text_xs().text_color(rgb(p().slate)).child(text.into())
+    div().font_family(MONO).text_size(px(10.5)).text_color(rgb(p().slate)).child(text.into())
 }
 
 fn readout(text: impl Into<SharedString>) -> Div {
@@ -155,7 +155,7 @@ fn title(text: &'static str) -> Div {
         .text_size(px(28.))
         .line_height(px(34.))
         .font_weight(FontWeight::BOLD)
-        .text_color(rgb(p().ink))
+        .text_color(rgb(p().gold))
         .child(tracked(text))
 }
 
@@ -290,8 +290,8 @@ fn take(index: usize, entry: &store::Entry, copied: bool, main: gpui::WeakEntity
     div()
         .id(("take", index))
         .flex()
-        .gap_5()
-        .py_4()
+        .gap_6()
+        .py_5()
         .px_3()
         .border_b_1()
         .border_color(rgb(p().hair))
@@ -313,7 +313,6 @@ fn take(index: usize, entry: &store::Entry, copied: bool, main: gpui::WeakEntity
                 .flex()
                 .flex_col()
                 .gap(px(2.))
-                .child(readout(format!("T-{:03}", index + 1)).text_xs())
                 .child(label(clock(entry.at))),
         )
         .child(
@@ -421,7 +420,13 @@ pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
                 Main {
                     state,
                     cmds,
-                    page: Page::Home,
+                    // HEYRA_PAGE=settings (or history, dictionary) opens on that page: for screenshots.
+                    page: match std::env::var("HEYRA_PAGE").as_deref() {
+                        Ok("history") => Page::History,
+                        Ok("dictionary") => Page::Dictionary,
+                        Ok("settings") => Page::Settings,
+                        _ => Page::Home,
+                    },
                     copied: None,
                     born: Instant::now(),
                     show_other_mics: false,
@@ -593,7 +598,6 @@ impl Main {
         let checks = s.checks;
         let model_ready = matches!(s.phase, Phase::Ready | Phase::Listening | Phase::Transcribing);
         let mic = s.mic_in_use.clone();
-        let rate = s.sample_rate;
         drop(s);
 
         let t = self.born.elapsed().as_secs_f32();
@@ -615,9 +619,9 @@ impl Main {
         let deck = div()
             .flex()
             .flex_col()
-            .gap_4()
-            .p_6()
-            .rounded(px(10.))
+            .gap_5()
+            .p_8()
+            .rounded(px(14.))
             .bg(rgb(p().panel))
             .border_1()
             .border_color(rgb(p().hair))
@@ -643,14 +647,12 @@ impl Main {
                     .flex_wrap()
                     .gap_x_4()
                     .gap_y_1()
-                    .child(label(format!("IN  {mic}")))
-                    .child(label(if rate > 0 {
-                        format!("{} kHz → 16 kHz", rate / 1000)
-                    } else {
-                        String::new()
-                    }))
-                    .child(label(format!("{} · ON THIS MAC", self.state.lock().unwrap().model.name().to_uppercase())))
-                    .child(label(format!("{} AFTER YOU LET GO", latency.to_uppercase()))),
+                    .child(label(format!(
+                        "{} · {} · {}",
+                        short(&mic, 28).to_uppercase(),
+                        self.state.lock().unwrap().model.name().to_uppercase(),
+                        latency.to_uppercase()
+                    ))),
             );
 
         let cell = |name: &'static str, value: String, note: String| {
@@ -660,8 +662,8 @@ impl Main {
                 .flex()
                 .flex_col()
                 .gap_2()
-                .px_5()
-                .py_4()
+                .px_6()
+                .py_6()
                 .child(label(name))
                 .child(readout(value).text_size(px(22.)))
                 .child(div().text_size(px(12.)).text_color(rgb(p().dim)).child(note))
@@ -670,14 +672,14 @@ impl Main {
             .flex()
             .border_1()
             .border_color(rgb(p().hair))
-            .rounded(px(10.))
+            .rounded(px(14.))
             .child(cell("TODAY", format!("{} w", grouped(today)), format!("{} all time", grouped(words))))
             .child(div().w(px(1.)).bg(rgb(p().hair)))
-            .child(cell("TIME SAVED", saved, "against typing".into()))
+            .child(cell("TIME SAVED", saved, "vs typing".into()))
             .child(div().w(px(1.)).bg(rgb(p().hair)))
-            .child(cell("STREAK", format!("{streak} {}", if streak == 1 { "day" } else { "days" }), "in a row".into()))
+            .child(cell("STREAK", format!("{streak} {}", if streak == 1 { "day" } else { "days" }), String::new()))
             .child(div().w(px(1.)).bg(rgb(p().hair)))
-            .child(cell("PACE", format!("{pace} wpm"), "typing is ~40".into()));
+            .child(cell("PACE", format!("{pace} wpm"), String::new()));
 
         // First-run setup: each step ticks itself off as macOS reports it done.
         let step = |id: &'static str, done: bool, name: &'static str, detail: String, action: Option<(&'static str, &'static str)>| {
@@ -708,14 +710,14 @@ impl Main {
                 })
         };
         let model_detail = match progress {
-            Some(p) => format!("Downloading, {:.0}%. Only this once.", p * 100.0),
+            Some(p) => format!("Downloading, {:.0}%", p * 100.0),
             None => "Loading…".to_string(),
         };
         let steps = [
             (model_ready, "Speech model on this Mac"),
             (checks.mic == Mic::Allowed, "Microphone"),
-            (checks.accessibility, "Accessibility, to hear fn and type for you"),
-            (checks.fn_free, "fn key free for Heyra"),
+            (checks.accessibility, "Accessibility"),
+            (checks.fn_free, "fn key"),
             (count > 0, "First take"),
         ];
         let done = steps.iter().filter(|(d, _)| *d).count();
@@ -729,9 +731,9 @@ impl Main {
                 steps[1].0,
                 steps[1].1,
                 if checks.mic == Mic::Denied {
-                    "Heyra was refused the microphone. Turn it on in Settings.".into()
+                    "Turned off. Allow it in Settings.".into()
                 } else {
-                    "macOS asks the first time you hold fn.".into()
+                    "Asked the first time you hold fn.".into()
                 },
                 (checks.mic == Mic::Denied).then_some(("OPEN SETTINGS", setup::PANE_MICROPHONE)),
             ))
@@ -739,17 +741,17 @@ impl Main {
                 "s-ax",
                 steps[2].0,
                 steps[2].1,
-                "Turn on Heyra in Privacy & Security → Accessibility.".into(),
+                "Turn on Heyra in Privacy & Security.".into(),
                 Some(("OPEN SETTINGS", setup::PANE_ACCESSIBILITY)),
             ))
             .child(step(
                 "s-fn",
                 steps[3].0,
                 steps[3].1,
-                "Keyboard → Press 🌐 key to → Do nothing, so fn doesn't also open emoji or dictation.".into(),
+                "Set Press 🌐 key to Do nothing.".into(),
                 Some(("KEYBOARD", setup::PANE_KEYBOARD)),
             ))
-            .child(step("s-take", steps[4].0, steps[4].1, "Click into any text box, hold fn, say a sentence, let go.".into(), None));
+            .child(step("s-take", steps[4].0, steps[4].1, "Hold fn in any text box and talk.".into(), None));
         let setup_done = done == steps.len();
 
         let me = cx.entity().downgrade();
@@ -760,7 +762,7 @@ impl Main {
         div()
             .flex()
             .flex_col()
-            .gap_8()
+            .gap_10()
             .child(title("Home"))
             .child(deck)
             .when(!setup_done, |d| d.child(setup_list))
@@ -771,7 +773,7 @@ impl Main {
                     .flex_col()
                     .child(label(if recent.is_empty() { "NO TAKES YET" } else { "RECENT" }).pb_2())
                     .when(recent.is_empty(), |d| {
-                        d.child(hint("Hold fn anywhere and talk. Let go to type it."))
+                        d.child(hint("Hold fn anywhere and talk."))
                     })
                     .children(recent),
             )
@@ -793,7 +795,7 @@ impl Main {
             .flex_col()
             .gap_6()
             .child(title("History"))
-            .child(hint("Kept on this Mac. Click one to copy it."))
+            .child(hint("Click one to copy it."))
             .child(
                 gpui::list(self.takes.clone(), move |row, _, _| {
                     let s = state.lock().unwrap();
@@ -816,15 +818,15 @@ impl Main {
             .flex_col()
             .gap_6()
             .child(title("Dictionary"))
-            .child(hint("Fix words Heyra mishears. One per line: heard => meant."))
-            .child(div().flex().child(button("edit-dict", "EDIT DICTIONARY").on_click(|_, _, _| {
+            .child(hint("heard => meant, one per line."))
+            .child(div().flex().child(button("edit-dict", "EDIT").on_click(|_, _, _| {
                 let _ = std::process::Command::new("open").arg("-t").arg(store::dictionary_path()).spawn();
             })))
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .when(empty, |d| d.child(hint("No rules yet. Example: a cappy bar => capybara")))
+                    .when(empty, |d| d.child(hint("None yet. e.g. a cappy bar => capybara")))
                     .children(rules.into_iter().map(|(heard, meant)| {
                         div()
                             .flex()
@@ -928,7 +930,7 @@ impl Main {
         div()
             .flex()
             .flex_col()
-            .gap(px(44.))
+            .gap(px(56.))
             .child(title("Settings"))
             .child(self.models(cx))
             .child(
@@ -938,20 +940,20 @@ impl Main {
                         KEEP_MIC_READY.store(on, Ordering::Relaxed);
                         store::save_settings(&store::Settings { keep_mic_ready: on, ..store::load_settings() });
                     })))
-                    .child(hint("Off turns the mic light out between takes, but can miss your first word.").px_3()),
+                    .child(hint("Off: the mic light goes out between takes.").px_3()),
             )
             .child(
                 section("PUSH TO TALK")
                     .child(div().px_3().text_size(px(15.)).text_color(rgb(p().ink)).child("Hold fn, talk, let go."))
-                    .child(hint("Double-tap fn for hands-free. Esc cancels. Say \"press enter\" to send.").px_3())
-                    .when(!fn_free, |d| d.child(hint("fn opens emoji? Keyboard settings → Press 🌐 key to → Do nothing.").px_3()))
+                    .child(hint("Double-tap for hands-free. Esc cancels.").px_3())
+                    .when(!fn_free, |d| d.child(hint("fn opens emoji? Set Press 🌐 key to Do nothing.").px_3()))
                     .child({
                         let recording = crate::hotkey::recording();
                         let chosen = crate::hotkey::button();
                         let text = if recording {
-                            "Press a key or mouse button… (esc cancels)".to_string()
+                            "Press a key or mouse button…".to_string()
                         } else {
-                            chosen.map_or("Also: none".into(), |b| format!("Also: {}", crate::hotkey::name(b)))
+                            chosen.map_or("Another key: none".into(), |b| format!("Another key: {}", crate::hotkey::name(b)))
                         };
                         div()
                             .flex()
@@ -1036,7 +1038,7 @@ impl Main {
             )
             .child(
                 section("GENERAL")
-                    .child(switch("sounds", "Click when a take starts and ends", crate::sound::enabled(), |on| {
+                    .child(switch("sounds", "Sounds", crate::sound::enabled(), |on| {
                         crate::sound::set_enabled(on);
                         store::save_settings(&store::Settings { sounds: on, ..store::load_settings() });
                     }))
@@ -1044,7 +1046,7 @@ impl Main {
                         MUTE_WHILE_TALKING.store(on, Ordering::Relaxed);
                         store::save_settings(&store::Settings { mute_while_talking: on, ..store::load_settings() });
                     }))
-                    .child(switch("words", "Show the words while you talk", SHOW_WORDS.load(Ordering::Relaxed), |on| {
+                    .child(switch("words", "Live words above the dot", SHOW_WORDS.load(Ordering::Relaxed), |on| {
                         SHOW_WORDS.store(on, Ordering::Relaxed);
                         store::save_settings(&store::Settings { show_words: on, ..store::load_settings() });
                     }))
@@ -1326,8 +1328,8 @@ impl Render for Main {
                         .border_1()
                         .border_color(rgb(p().hair))
                         .bg(rgb(p().ground))
-                        .pt(px(44.))
-                        .px(px(52.))
+                        .pt(px(56.))
+                        .px(px(64.))
                         .when(!own_scroll, |d| d.overflow_y_scroll().pb(px(64.)))
                         .child(div().w_full().min_w_0().max_w(px(840.)).when(own_scroll, |d| d.h_full()).child(page))
                 }),
