@@ -28,7 +28,7 @@ pub const GROUND: u32 = 0x1f2026; // graphite, biased toward the slate
 pub const PANEL: u32 = 0x262831;
 pub const RAIL: u32 = 0x1a1b20;
 pub const HAIR: u32 = 0x343744;
-pub const CREAM: u32 = 0xede0c4; // readouts and your words
+pub const CREAM: u32 = 0xebebed; // readouts and your words: a neutral off-white
 pub const SLATE: u32 = 0x8a9aa6; // labels
 pub const DIM: u32 = 0x5b6470; // off segments, quiet text
 pub const GOLD: u32 = 0xd9a86a; // live signal
@@ -58,16 +58,16 @@ pub struct Palette {
 
 pub const DARK: Palette = Palette { ground: GROUND, panel: PANEL, rail: RAIL, hair: HAIR, ink: CREAM, slate: SLATE, dim: DIM, gold: GOLD, rec: REC };
 
-/// Warm paper; the gold deepened to read on it.
+/// White and true greys; the gold deepened to read on white.
 pub const LIGHT: Palette = Palette {
-    ground: 0xf6f3ec,
-    panel: 0xfffdf8,
-    rail: 0xeeeae1,
-    hair: 0xdfd9cc,
-    ink: 0x1f2026,
-    slate: 0x5d6873,
-    dim: 0x979ea5,
-    gold: 0xa5702c,
+    ground: 0xffffff,
+    panel: 0xf7f7f8,
+    rail: 0xf1f1f3,
+    hair: 0xe3e3e7,
+    ink: 0x18181b,
+    slate: 0x5f6670,
+    dim: 0xa1a1aa,
+    gold: 0xa8701f,
     rec: 0xc4573a,
 };
 
@@ -346,6 +346,8 @@ pub struct Main {
     /// The sidebar shows labels (or just icons), and since when, for the slide.
     rail_open: bool,
     rail_since: Instant,
+    /// The width the latest slide started from.
+    rail_from: f32,
     /// History, newest first: only the rows on screen are laid out.
     takes: gpui::ListState,
 }
@@ -382,7 +384,7 @@ pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
             titlebar: Some(gpui::TitlebarOptions {
                 title: Some("Heyra".into()),
                 appears_transparent: true,
-                traffic_light_position: Some(point(px(14.), px(14.))),
+                traffic_light_position: Some(point(px(16.), px(16.))),
             }),
             window_min_size: Some(size(px(760.), px(520.))),
             ..Default::default()
@@ -409,7 +411,8 @@ pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
                     slow: Slow::default(),
                     fetching: false,
                     rail_open: !store::load_settings().sidebar_narrow,
-                    rail_since: Instant::now() - Duration::from_secs(1),
+                    rail_since: Instant::now() - Duration::from_secs(2),
+                    rail_from: RAIL_WIDE,
                     takes: gpui::ListState::new(0, gpui::ListAlignment::Top, px(600.)),
                 }
             })
@@ -419,6 +422,22 @@ pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
 }
 
 impl Main {
+    /// The sidebar's width now, and whether it's still moving: a damped spring (a
+    /// little overshoot, then settled) from where the last slide began.
+    fn rail_width(&self) -> (f32, bool) {
+        const STIFFNESS: f32 = 260.0; // ω² for ω ≈ 16 rad/s
+        const DAMPING: f32 = 0.72; // ζ: under 1, so it overshoots a touch
+        let to = if self.rail_open { RAIL_WIDE } else { RAIL_NARROW };
+        let t = self.rail_since.elapsed().as_secs_f32();
+        if t > 0.9 {
+            return (to, false);
+        }
+        let w = STIFFNESS.sqrt();
+        let wd = w * (1.0 - DAMPING * DAMPING).sqrt();
+        let progress = 1.0 - (-DAMPING * w * t).exp() * ((wd * t).cos() + DAMPING * w / wd * (wd * t).sin());
+        (self.rail_from + (to - self.rail_from) * progress, true)
+    }
+
     /// Each frame: redraw only if something shown has changed.
     fn poll(&mut self, cx: &mut Context<Self>) {
         self.ticks = self.ticks.wrapping_add(1);
@@ -478,7 +497,7 @@ impl Main {
         h.finish()
     }
 
-    fn nav(&self, id: &'static str, icon: &'static str, text: &'static str, page: Page, wide: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    fn nav(&self, id: &'static str, icon: &'static str, text: &'static str, page: Page, shown: f32, cx: &mut Context<Self>) -> impl IntoElement {
         let active = self.page == page;
         let color = if active { p().ink } else { p().slate };
         div()
@@ -502,7 +521,7 @@ impl Main {
                 cx.notify();
             }))
             .child(gpui::svg().path(icon).size(px(17.)).flex_none().text_color(rgb(if active { p().gold } else { color })))
-            .when(wide, |d| d.child(div().whitespace_nowrap().child(text)))
+            .child(div().whitespace_nowrap().opacity(shown).child(text))
     }
 
     fn home(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1176,15 +1195,13 @@ impl Render for Main {
             Page::Dictionary => self.dictionary().into_any_element(),
             Page::Settings => self.settings(cx).into_any_element(),
         };
-        // The sidebar slides between labels and an icon rail.
-        let t = (self.rail_since.elapsed().as_secs_f32() / 0.26).min(1.0);
-        let eased = 1.0 - (1.0 - t).powi(3);
-        let (from, to) = if self.rail_open { (RAIL_NARROW, RAIL_WIDE) } else { (RAIL_WIDE, RAIL_NARROW) };
-        let width = from + (to - from) * eased;
-        if t < 1.0 {
+        // The sidebar springs between labels and an icon rail. Labels stay laid out and
+        // are clipped by its edge, fading with its width, so nothing reflows.
+        let (width, moving) = self.rail_width();
+        if moving {
             window.request_animation_frame();
         }
-        let wide = width > 150.;
+        let shown = ((width - RAIL_NARROW) / (RAIL_WIDE - RAIL_NARROW)).clamp(0.0, 1.0);
         let rail = div()
             .w(px(width))
             .overflow_hidden()
@@ -1193,10 +1210,7 @@ impl Render for Main {
             .flex()
             .flex_col()
             .justify_between()
-            .bg(rgb(p().rail))
-            .border_r_1()
-            .border_color(rgb(p().hair))
-            .pt(px(60.))
+            .pt(px(6.))
             .pb_6()
             .child(
                 div()
@@ -1211,21 +1225,21 @@ impl Render for Main {
                             .items_center()
                             .gap(px(10.))
                             .child(mark(18.))
-                            .when(wide, |d| {
-                                d.child(
-                                    div()
-                                        .font_family(SANS)
-                                        .text_size(px(19.))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(rgb(p().ink))
-                                        .child("Heyra"),
-                                )
-                            }),
+                            .child(
+                                div()
+                                    .font_family(SANS)
+                                    .text_size(px(19.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(p().ink))
+                                    .whitespace_nowrap()
+                                    .opacity(shown)
+                                    .child("Heyra"),
+                            ),
                     )
-                    .child(self.nav("nav-home", "icons/home.svg", "HOME", Page::Home, wide, cx))
-                    .child(self.nav("nav-history", "icons/history.svg", "HISTORY", Page::History, wide, cx))
-                    .child(self.nav("nav-dict", "icons/dictionary.svg", "DICTIONARY", Page::Dictionary, wide, cx))
-                    .child(self.nav("nav-settings", "icons/settings.svg", "SETTINGS", Page::Settings, wide, cx)),
+                    .child(self.nav("nav-home", "icons/home.svg", "HOME", Page::Home, shown, cx))
+                    .child(self.nav("nav-history", "icons/history.svg", "HISTORY", Page::History, shown, cx))
+                    .child(self.nav("nav-dict", "icons/dictionary.svg", "DICTIONARY", Page::Dictionary, shown, cx))
+                    .child(self.nav("nav-settings", "icons/settings.svg", "SETTINGS", Page::Settings, shown, cx)),
             )
             .child(
                 div()
@@ -1234,20 +1248,17 @@ impl Render for Main {
                     .flex_col()
                     .gap_1()
                     .whitespace_nowrap()
-                    .child(div().flex().items_center().gap_2().child(light(phase)).when(wide, |d| d.child(label(match phase {
+                    .child(div().flex().items_center().gap_2().child(light(phase)).child(label(match phase {
                         Phase::Listening => "p().rec",
                         Phase::Transcribing => "WRITING",
                         Phase::Loading => "LOADING",
                         Phase::Ready => "READY · FN",
                         Phase::Error => "CHECK HOME",
-                    }))))
-                    .when(wide, |d| d.child(label(mic).text_color(rgb(p().dim)).truncate())),
+                    }).opacity(shown)))
+                    .child(label(mic).text_color(rgb(p().dim)).opacity(shown)),
             );
         let toggle = div()
             .id("rail-toggle")
-            .absolute()
-            .top(px(9.))
-            .left(px(82.))
             .size(px(26.))
             .rounded(px(6.))
             .flex()
@@ -1256,41 +1267,50 @@ impl Render for Main {
             .cursor_pointer()
             .hover(|s| s.bg(alpha(p().ink, 0.06)))
             .on_click(cx.listener(|this, _, _, cx| {
-                this.rail_open = !this.rail_open;
                 // A reversal mid-slide starts from where it is.
-                let left = (1.0 - (this.rail_since.elapsed().as_secs_f32() / 0.26)).max(0.0);
-                this.rail_since = Instant::now() - Duration::from_secs_f32(left * 0.26);
+                this.rail_from = this.rail_width().0;
+                this.rail_open = !this.rail_open;
+                this.rail_since = Instant::now();
                 store::save_settings(&store::Settings { sidebar_narrow: !this.rail_open, ..store::load_settings() });
                 cx.notify();
             }))
             .child(gpui::svg().path("icons/sidebar.svg").size(px(17.)).text_color(rgb(p().slate)));
+        // A top bar for the traffic lights and the sidebar toggle; under it the sidebar,
+        // and the page as a panel set into the window.
+        let top = div().h(px(44.)).flex_none().flex().items_center().pl(px(84.)).child(toggle);
         div()
-            .relative()
             .flex()
+            .flex_col()
             .size_full()
             .on_mouse_up(gpui::MouseButton::Left, cx.listener(|this, _, _, cx| {
                 this.refetch(cx);
                 cx.notify();
             }))
-            .bg(rgb(p().ground))
+            .bg(rgb(p().rail))
             .font_family(SANS)
             .text_color(rgb(p().ink))
-            .child(rail)
-            .child({
-                // History scrolls inside its own list, which needs the page's full height.
-                let own_scroll = self.page == Page::History;
-                div()
-                    .id("page")
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .pt(px(56.))
-                    .px(px(56.))
-                    .when(!own_scroll, |d| d.overflow_y_scroll().pb(px(72.)))
-                    .child(div().w_full().min_w_0().max_w(px(680.)).when(own_scroll, |d| d.h_full()).child(page))
-            })
-            // Last, so it draws above the sidebar.
-            .child(toggle)
+            .child(top)
+            .child(
+                div().flex().flex_1().min_h_0().child(rail).child({
+                    // History scrolls inside its own list, which needs the page's full height.
+                    let own_scroll = self.page == Page::History;
+                    div()
+                        .id("page")
+                        .flex_1()
+                        .min_w_0()
+                        .h_full()
+                        .mr_2()
+                        .mb_2()
+                        .rounded(px(12.))
+                        .border_1()
+                        .border_color(rgb(p().hair))
+                        .bg(rgb(p().ground))
+                        .pt(px(44.))
+                        .px(px(52.))
+                        .when(!own_scroll, |d| d.overflow_y_scroll().pb(px(64.)))
+                        .child(div().w_full().min_w_0().max_w(px(680.)).when(own_scroll, |d| d.h_full()).child(page))
+                }),
+            )
     }
 }
 
