@@ -42,3 +42,6 @@ tingle (TING chirp decoder, ported to Rust in src/ting.rs) - MIT License
 ting-wispr (the TING-side script and tones in assets/ting) - MIT License
   https://github.com/alcun/ting-wispr
   Built on tingle's TING engine; see LICENSE.tingle.
+
+Outland (assets/fonts/Outland-Bold.otf) - Pixel Sagas (Neale Davidson)
+  https://www.pixelsagas.com. Used with the designer's permission.

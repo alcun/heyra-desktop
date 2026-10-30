@@ -481,6 +481,7 @@ fn main() {
             Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexSans-SemiBold.ttf").as_slice()),
             Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexMono-Regular.ttf").as_slice()),
             Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexMono-Medium.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../assets/fonts/Outland-Bold.otf").as_slice()),
         ]);
         if welcome {
             onboarding::open(cx, state.clone(), tx.clone());

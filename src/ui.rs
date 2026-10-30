@@ -36,6 +36,8 @@ pub const REC: u32 = 0xe0795a; // recording light
 
 pub const SANS: &str = "IBM Plex Sans";
 pub const MONO: &str = "IBM Plex Mono";
+/// Titles and the wordmark: Outland, after the signage in the 1981 film.
+pub const DISPLAY: &str = "Outland";
 
 
 /// The main window's colours. The floating pieces (the dot, the words, the cards) keep
@@ -137,10 +139,10 @@ fn readout(text: impl Into<SharedString>) -> Div {
 
 fn title(text: &'static str) -> Div {
     div()
-        .font_family(SANS)
-        .text_size(px(26.))
-        .line_height(px(32.))
-        .font_weight(FontWeight::SEMIBOLD)
+        .font_family(DISPLAY)
+        .text_size(px(28.))
+        .line_height(px(34.))
+        .font_weight(FontWeight::BOLD)
         .text_color(rgb(p().ink))
         .child(text)
 }
@@ -1227,9 +1229,9 @@ impl Render for Main {
                             .child(mark(18.))
                             .child(
                                 div()
-                                    .font_family(SANS)
+                                    .font_family(DISPLAY)
                                     .text_size(px(19.))
-                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .font_weight(FontWeight::BOLD)
                                     .text_color(rgb(p().ink))
                                     .whitespace_nowrap()
                                     .opacity(shown)
