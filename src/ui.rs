@@ -343,6 +343,8 @@ impl gpui::AssetSource for Icons {
             "icons/settings.svg" => include_bytes!("../assets/icons/settings.svg"),
             "icons/sidebar.svg" => include_bytes!("../assets/icons/sidebar.svg"),
             "icons/chevron.svg" => include_bytes!("../assets/icons/chevron.svg"),
+            "icons/mic.svg" => include_bytes!("../assets/icons/mic.svg"),
+            "icons/model.svg" => include_bytes!("../assets/icons/model.svg"),
             _ => return Ok(None),
         };
         Ok(Some(std::borrow::Cow::Borrowed(bytes)))
@@ -540,7 +542,7 @@ pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
                     rail_from: RAIL_WIDE,
                     // HEYRA_TIP=nav-dict (any tooltip's key) shows it as if hovered: for screenshots.
                     hovered: std::env::var("HEYRA_TIP").ok().map(Into::into),
-                    menu: std::env::var("HEYRA_MENU").ok().and_then(|m| ["mic", "model"].into_iter().find(|k| *k == m)),
+                    menu: std::env::var("HEYRA_MENU").ok().and_then(|m| ["mic", "model", "home-mic", "home-model"].into_iter().find(|k| *k == m)),
                     orb: crate::gpu_orb::Gpu::new().ok(),
                     orb_motion: crate::gpu_orb::Motion::new(1.0),
                     orb_last: Instant::now(),
@@ -610,10 +612,9 @@ impl Main {
         Some(frame)
     }
 
-    /// A row that opens a menu: its name, what's chosen and a chevron; the menu floats
-    /// below its right edge on the top layer, and closes on a pick or a click elsewhere.
-    fn dropdown(&self, id: &'static str, name: &'static str, current: String, status: Option<(String, u32)>, items: Vec<AnyElement>, cx: &Context<Self>) -> AnyElement {
-        let open = self.menu == Some(id);
+    /// A floating menu of `items` on the top layer, its `anchor` corner at the spot it's
+    /// placed; it closes on a pick or a click elsewhere.
+    fn menu_panel(&self, id: &'static str, items: Vec<AnyElement>, anchor: gpui::Corner, cx: &Context<Self>) -> impl IntoElement {
         let panel = div()
             .id(ElementId::Name(format!("menu-{id}").into()))
             .w(px(420.))
@@ -641,13 +642,49 @@ impl Main {
                 cx.notify();
             }))
             .children(items.into_iter().map(|item| div().rounded(px(8.)).overflow_hidden().child(item)));
-        let menu = gpui::deferred(gpui::anchored().anchor(gpui::Corner::TopRight).child(div().mt(px(6.)).child(gpui::AnimationExt::with_animation(
+        gpui::deferred(gpui::anchored().anchor(anchor).child(div().mt(px(6.)).child(gpui::AnimationExt::with_animation(
             panel,
             ("menu-in", id.len()),
             gpui::Animation::new(Duration::from_millis(140)).with_easing(gpui::ease_out_quint()),
             |panel, t| panel.opacity(t).mt(px(-6. * (1. - t))),
         ))))
-        .with_priority(2);
+        .with_priority(2)
+    }
+
+    /// A glassy pill on Home's dark card: an icon, the choice and a chevron; it opens
+    /// the same menu as Settings, below it.
+    fn chip(&self, id: &'static str, icon: &'static str, text: String, status: Option<(String, u32)>, items: Vec<AnyElement>, cx: &Context<Self>) -> impl IntoElement {
+        let open = self.menu == Some(id);
+        div()
+            .id(ElementId::Name(format!("chip-{id}").into()))
+            .relative()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .h(px(32.))
+            .px(px(12.))
+            .rounded_full()
+            .bg(alpha(CREAM, if open { 0.12 } else { 0.06 }))
+            .border_1()
+            .border_color(alpha(if open { GOLD } else { CREAM }, if open { 0.5 } else { 0.10 }))
+            .cursor_pointer()
+            .hover(|s| s.bg(alpha(CREAM, 0.10)).border_color(alpha(CREAM, 0.2)))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.menu = if this.menu == Some(id) { None } else { Some(id) };
+                cx.notify();
+            }))
+            .child(gpui::svg().path(icon).size(px(14.)).text_color(alpha(GOLD, 0.9)))
+            .child(div().font_family(SANS).text_size(px(13.)).text_color(alpha(CREAM, 0.88)).whitespace_nowrap().child(short(&text, 30)))
+            .children(status.map(|(t, _)| div().font_family(MONO).text_size(px(10.)).text_color(rgb(GOLD)).child(t)))
+            .child(gpui::svg().path("icons/chevron.svg").size(px(13.)).text_color(alpha(CREAM, 0.5)))
+            .when(open, |d| d.child(div().absolute().top_full().left_0().child(self.menu_panel(id, items, gpui::Corner::TopLeft, cx))))
+    }
+
+    /// A row that opens a menu: its name, what's chosen and a chevron; the menu floats
+    /// below its right edge on the top layer, and closes on a pick or a click elsewhere.
+    fn dropdown(&self, id: &'static str, name: &'static str, current: String, status: Option<(String, u32)>, items: Vec<AnyElement>, cx: &Context<Self>) -> AnyElement {
+        let open = self.menu == Some(id);
+        let menu = self.menu_panel(id, items, gpui::Corner::TopRight, cx);
         row(id)
             .cursor_pointer()
             .hover(|s| s.bg(alpha(p().ink, 0.035)))
@@ -815,18 +852,11 @@ impl Main {
                 }
             }
         }
-        let timed: Vec<f32> = s.history.iter().filter(|e| e.took > 0.0).map(|e| e.took).collect();
-        let latency = if timed.is_empty() {
-            "–".to_string()
-        } else {
-            format!("{:.2} s", timed.iter().sum::<f32>() / timed.len() as f32)
-        };
         let count = s.history.len();
         let level = s.level;
         let progress = s.progress;
         let checks = s.checks;
         let model_ready = matches!(s.phase, Phase::Ready | Phase::Listening | Phase::Transcribing);
-        let mic = s.mic_in_use.clone();
         drop(s);
 
         let frame = self.orb_frame(window, phase, level);
@@ -841,6 +871,10 @@ impl Main {
         // A viewport into space: the orb itself, live. Always dark, whatever the theme:
         // it's a window onto the dot's world.
         let live = matches!(phase, Phase::Listening | Phase::Transcribing);
+        let (current_mic, mic_items) = self.mic_menu(cx);
+        let mic_chip = self.chip("home-mic", "icons/mic.svg", current_mic, None, mic_items, cx);
+        let (current_model, model_status, model_items) = self.model_menu();
+        let model_chip = self.chip("home-model", "icons/model.svg", current_model, model_status, model_items, cx);
         let deck = div()
             .relative()
             .overflow_hidden()
@@ -877,19 +911,7 @@ impl Main {
                                     .child(tracked(state_word)),
                             )
                             .child(div().font_family(SANS).text_size(px(16.)).line_height(px(23.)).text_color(alpha(CREAM, 0.72)).child(message))
-                            .child(
-                                div()
-                                    .pt(px(6.))
-                                    .font_family(MONO)
-                                    .text_size(px(10.5))
-                                    .text_color(alpha(CREAM, 0.38))
-                                    .child(format!(
-                                        "{}  ·  {}  ·  {}",
-                                        short(&mic, 28).to_uppercase(),
-                                        self.state.lock().unwrap().model.name().to_uppercase(),
-                                        latency.to_uppercase()
-                                    )),
-                            ),
+                            .child(div().pt(px(8.)).flex().gap(px(8.)).child(mic_chip).child(model_chip)),
                     ),
             );
 
@@ -1147,61 +1169,8 @@ impl Main {
     }
 
     fn settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (devices, chosen, in_use, ting_heard) = {
-            let s = self.state.lock().unwrap();
-            (s.devices.clone(), s.mic.clone(), s.mic_in_use.clone(), s.ting_heard)
-        };
-        let mac_default = &self.slow.mac_default;
-        // Real mics first; the Mac's own choice; then phones and virtual devices, folded away.
-        let (real, other): (Vec<_>, Vec<_>) = devices.into_iter().partition(|m| m.kind != crate::mics::Kind::Other);
-        let mut options: Vec<(String, Option<&'static str>, Option<String>)> = real
-            .into_iter()
-            .map(|m| {
-                let tag = match m.kind {
-                    crate::mics::Kind::BuiltIn => Some("BUILT-IN"),
-                    crate::mics::Kind::Bluetooth => Some("BLUETOOTH"),
-                    _ if ting_heard && m.name == in_use => Some("FX MIC"),
-                    _ => None,
-                };
-                (m.name.clone(), tag, Some(m.name))
-            })
-            .collect();
-        options.push((format!("Same as the Mac ({mac_default})"), None, None));
-        options.extend(other.into_iter().map(|m| (m.name.clone(), None, Some(m.name))));
-        let current_mic = chosen.clone().unwrap_or_else(|| "Same as the Mac".into());
-        let mut rows: Vec<AnyElement> = Vec::new();
-        for (i, (name, tag, value)) in options.into_iter().enumerate() {
-            let selected = chosen == value;
-            let cmds = self.cmds.clone();
-            rows.push(
-                div()
-                    .id(("mic", i))
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .min_h(px(48.))
-                    .py(px(12.))
-                    .px(px(18.))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(alpha(p().ink, 0.035)))
-                    .on_click(cx.listener(move |_, _, _, cx| {
-                        let _ = cmds.send(Cmd::SetMic(value.clone()));
-                        cx.notify();
-                    }))
-                    .child(
-                        div()
-                            .flex_none()
-                            .size(px(9.))
-                            .rounded_full()
-                            .border_1()
-                            .border_color(rgb(if selected { p().gold } else { p().dim }))
-                            .when(selected, |d| d.bg(rgb(p().gold))),
-                    )
-                    .child(div().flex_1().text_size(px(15.)).text_color(rgb(if selected { p().ink } else { p().slate })).child(name))
-                    .children(tag.map(|t| div().font_family(MONO).text_xs().text_color(rgb(if t == "FX MIC" { p().gold } else { p().dim })).child(t)))
-                    .into_any_element(),
-            );
-        }
+        let ting_heard = self.state.lock().unwrap().ting_heard;
+        let (current_mic, rows) = self.mic_menu(cx);
         let fn_free = self.state.lock().unwrap().checks.fn_free;
         let (disk, note) = {
             let s = self.state.lock().unwrap();
@@ -1348,9 +1317,131 @@ impl Main {
             .child(general)
     }
 
+    /// The mics to choose from, as menu rows, and the one chosen.
+    fn mic_menu(&self, cx: &mut Context<Self>) -> (String, Vec<AnyElement>) {
+        let (devices, chosen, in_use, ting_heard) = {
+            let s = self.state.lock().unwrap();
+            (s.devices.clone(), s.mic.clone(), s.mic_in_use.clone(), s.ting_heard)
+        };
+        let mac_default = &self.slow.mac_default;
+        // Real mics first; the Mac's own choice; then phones and virtual devices, folded away.
+        let (real, other): (Vec<_>, Vec<_>) = devices.into_iter().partition(|m| m.kind != crate::mics::Kind::Other);
+        let mut options: Vec<(String, Option<&'static str>, Option<String>)> = real
+            .into_iter()
+            .map(|m| {
+                let tag = match m.kind {
+                    crate::mics::Kind::BuiltIn => Some("BUILT-IN"),
+                    crate::mics::Kind::Bluetooth => Some("BLUETOOTH"),
+                    _ if ting_heard && m.name == in_use => Some("FX MIC"),
+                    _ => None,
+                };
+                (m.name.clone(), tag, Some(m.name))
+            })
+            .collect();
+        options.push((format!("Same as the Mac ({mac_default})"), None, None));
+        options.extend(other.into_iter().map(|m| (m.name.clone(), None, Some(m.name))));
+        let current_mic = chosen.clone().unwrap_or_else(|| "Same as the Mac".into());
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for (i, (name, tag, value)) in options.into_iter().enumerate() {
+            let selected = chosen == value;
+            let cmds = self.cmds.clone();
+            rows.push(
+                div()
+                    .id(("mic", i))
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .min_h(px(48.))
+                    .py(px(12.))
+                    .px(px(18.))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(alpha(p().ink, 0.035)))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        let _ = cmds.send(Cmd::SetMic(value.clone()));
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .flex_none()
+                            .size(px(9.))
+                            .rounded_full()
+                            .border_1()
+                            .border_color(rgb(if selected { p().gold } else { p().dim }))
+                            .when(selected, |d| d.bg(rgb(p().gold))),
+                    )
+                    .child(div().flex_1().text_size(px(15.)).text_color(rgb(if selected { p().ink } else { p().slate })).child(name))
+                    .children(tag.map(|t| div().font_family(MONO).text_xs().text_color(rgb(if t == "FX MIC" { p().gold } else { p().dim })).child(t)))
+                    .into_any_element(),
+            );
+        }
+        (current_mic, rows)
+    }
+
     /// The speech models: Heyra's list, then a folder of your own. Clicking one
     /// downloads it if needed and switches; the current one works until then.
     fn models(&self, cx: &mut Context<Self>) -> Div {
+        let (current, current_status, rows) = self.model_menu();
+        let (error, retry) = {
+            let s = self.state.lock().unwrap();
+            (s.model_error.clone(), s.retry.clone())
+        };
+        let (cmds, state) = (self.cmds.clone(), self.state.clone());
+        let choose = row("model-folder")
+            .cursor_pointer()
+            .hover(|s| s.bg(alpha(p().ink, 0.035)))
+            .child(div().text_size(px(15.)).text_color(rgb(p().gold)).child("Use your own model…"))
+            .on_click(cx.listener(move |_, _, _, cx| {
+            let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
+                files: false,
+                directories: true,
+                multiple: false,
+                prompt: Some("Use this model".into()),
+            });
+            let (cmds, state) = (cmds.clone(), state.clone());
+            cx.spawn(async move |_, _| {
+                let Ok(Ok(Some(paths))) = paths.await else { return };
+                let Some(dir) = paths.into_iter().next() else { return };
+                // Loading the model to check it takes a moment: not on the window's thread.
+                // Only the most recent pick counts, whichever check finishes first.
+                let ticket = FOLDER_PICKS.fetch_add(1, Ordering::Relaxed) + 1;
+                std::thread::spawn(move || {
+                    let checked = model::check_folder(&dir);
+                    if FOLDER_PICKS.load(Ordering::Relaxed) != ticket {
+                        return;
+                    }
+                    match checked {
+                        Ok(()) => {
+                            let _ = cmds.send(Cmd::UseModel(Choice::Folder(dir)));
+                        }
+                        Err(e) => state.lock().unwrap().model_error = Some((Choice::Folder(dir), e)),
+                    }
+                });
+            })
+            .detach();
+        }));
+        let action = |id: &'static str, text: &'static str| {
+            row(id).cursor_pointer().hover(|s| s.bg(alpha(p().ink, 0.035))).child(div().text_size(px(15.)).text_color(rgb(p().gold)).child(text))
+        };
+        let mut rows = vec![self.dropdown("model", "Voice model", current, current_status, rows, cx)];
+        rows.push(choose.into_any_element());
+        rows.push(
+            action("data", "Open data folder")
+                .on_click(|_, _, _| {
+                    let _ = std::process::Command::new("open").arg(store::dir()).spawn();
+                })
+                .into_any_element(),
+        );
+        let footer = match (error, retry) {
+            (Some((c, e)), _) => Some(format!("{}: {e}", c.name()).into()),
+            (None, Some((why, _))) => Some(format!("{why} Heyra tries again by itself.").into()),
+            _ => None,
+        };
+        group(Some("VOICE MODEL"), rows, footer)
+    }
+
+    /// The models to choose from, as menu rows; the one in use (or on its way) and how
+    /// it's going.
+    fn model_menu(&self) -> (String, Option<(String, u32)>, Vec<AnyElement>) {
         let (in_use, switching, progress, error, phase, retry) = {
             let s = self.state.lock().unwrap();
             (s.model.clone(), s.switching.clone(), s.progress, s.model_error.clone(), s.phase, s.retry.clone())
@@ -1455,63 +1546,12 @@ impl Main {
                     .into_any_element(),
             );
         }
-        let (cmds, state) = (self.cmds.clone(), self.state.clone());
-        let choose = row("model-folder")
-            .cursor_pointer()
-            .hover(|s| s.bg(alpha(p().ink, 0.035)))
-            .child(div().text_size(px(15.)).text_color(rgb(p().gold)).child("Use your own model…"))
-            .on_click(cx.listener(move |_, _, _, cx| {
-            let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
-                files: false,
-                directories: true,
-                multiple: false,
-                prompt: Some("Use this model".into()),
-            });
-            let (cmds, state) = (cmds.clone(), state.clone());
-            cx.spawn(async move |_, _| {
-                let Ok(Ok(Some(paths))) = paths.await else { return };
-                let Some(dir) = paths.into_iter().next() else { return };
-                // Loading the model to check it takes a moment: not on the window's thread.
-                // Only the most recent pick counts, whichever check finishes first.
-                let ticket = FOLDER_PICKS.fetch_add(1, Ordering::Relaxed) + 1;
-                std::thread::spawn(move || {
-                    let checked = model::check_folder(&dir);
-                    if FOLDER_PICKS.load(Ordering::Relaxed) != ticket {
-                        return;
-                    }
-                    match checked {
-                        Ok(()) => {
-                            let _ = cmds.send(Cmd::UseModel(Choice::Folder(dir)));
-                        }
-                        Err(e) => state.lock().unwrap().model_error = Some((Choice::Folder(dir), e)),
-                    }
-                });
-            })
-            .detach();
-        }));
-        let action = |id: &'static str, text: &'static str| {
-            row(id).cursor_pointer().hover(|s| s.bg(alpha(p().ink, 0.035))).child(div().text_size(px(15.)).text_color(rgb(p().gold)).child(text))
-        };
         // The one in use, or the one on its way with how it's going.
         let (current, current_status) = match &switching {
             Some(next) => (next.name(), Some(status(next, (String::new(), p().dim)))),
             None => (in_use.name(), (phase == Phase::Loading).then(|| status(&in_use, (String::new(), p().dim)))),
         };
-        let mut rows = vec![self.dropdown("model", "Voice model", current, current_status, rows, cx)];
-        rows.push(choose.into_any_element());
-        rows.push(
-            action("data", "Open data folder")
-                .on_click(|_, _, _| {
-                    let _ = std::process::Command::new("open").arg(store::dir()).spawn();
-                })
-                .into_any_element(),
-        );
-        let footer = match (error, retry) {
-            (Some((c, e)), _) => Some(format!("{}: {e}", c.name()).into()),
-            (None, Some((why, _))) => Some(format!("{why} Heyra tries again by itself.").into()),
-            _ => None,
-        };
-        group(Some("VOICE MODEL"), rows, footer)
+        (current, current_status, rows)
     }
 }
 
