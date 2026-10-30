@@ -346,6 +346,8 @@ fn grouped(n: usize) -> String {
 const RAIL_WIDE: f32 = 212.;
 /// The orb in Home's card.
 const ORB_CARD: f32 = 120.;
+/// Between the orb's frames as it drifts at rest: 15 a second.
+const ORB_DRIFT: Duration = Duration::from_millis(66);
 const RAIL_NARROW: f32 = 66.;
 
 /// The icons, drawn for Heyra, built into the app.
@@ -453,6 +455,9 @@ pub struct Main {
     orb_last: Instant,
     orb_image: Option<std::sync::Arc<gpui::RenderImage>>,
     orb_phase: Option<Phase>,
+    orb_drawn: Instant,
+    /// Home's orb drifts at rest while the window is in use.
+    orb_drifting: bool,
     /// The width the latest slide started from.
     rail_from: f32,
     /// History, newest first: only the rows on screen are laid out.
@@ -558,6 +563,8 @@ pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
                     orb_last: Instant::now(),
                     orb_image: None,
                     orb_phase: None,
+                    orb_drawn: Instant::now(),
+                    orb_drifting: false,
                     takes: gpui::ListState::new(0, gpui::ListAlignment::Top, px(600.)),
                 }
             })
@@ -588,14 +595,18 @@ impl Main {
     fn orb_frame(&mut self, window: &mut Window, phase: Phase, level: f32) -> Option<std::sync::Arc<gpui::RenderImage>> {
         let moving = matches!(phase, Phase::Listening | Phase::Transcribing);
         let settling = self.orb_last.elapsed() < Duration::from_millis(900);
-        if self.orb_image.is_some() && !moving && !settling && self.orb_phase == Some(phase) {
+        // At rest it drifts, slowly, but only while this window is the one in use.
+        // Its frames are asked for by `poll` at 15 a second: no redraw in between.
+        self.orb_drifting = window.is_window_active();
+        if self.orb_image.is_some() && !moving && !settling && self.orb_phase == Some(phase) && (!self.orb_drifting || self.orb_drawn.elapsed() < ORB_DRIFT) {
             return self.orb_image.clone();
         }
         if self.orb_phase != Some(phase) {
             self.orb_phase = Some(phase);
             self.orb_last = Instant::now();
         }
-        let dt = 1.0 / 60.0;
+        let dt = self.orb_drawn.elapsed().as_secs_f32().min(0.1);
+        self.orb_drawn = Instant::now();
         self.orb_motion.step(dt, phase == Phase::Listening, phase == Phase::Transcribing, false, level, 1.0);
         let gpu = self.orb.as_ref()?;
         let pixels = (ORB_CARD * window.scale_factor()) as u64;
@@ -640,7 +651,8 @@ impl Main {
             MAC_LIGHT.store(mac_is_light(), Ordering::Relaxed);
         }
         let seen = self.signature();
-        if seen != self.seen {
+        let orb_due = self.page == Page::Home && self.orb_drifting && self.orb_drawn.elapsed() >= ORB_DRIFT;
+        if seen != self.seen || orb_due {
             self.seen = seen;
             cx.notify();
         }
@@ -790,22 +802,8 @@ impl Main {
             Phase::Error => "CHECK",
         };
 
-        // A viewport into space: the orb itself, live, among a few stars. Always dark,
-        // whatever the theme: it's a window onto the dot's world.
-        let stars = (0..42u32).map(|i| {
-            // Fixed, scattered places: a cheap hash of the index.
-            let h = |k: u32| ((i.wrapping_mul(2654435761).wrapping_add(k.wrapping_mul(40503))) >> 8) % 1000;
-            let (x, y) = (h(1) as f32 / 1000., h(2) as f32 / 1000.);
-            let bright = 0.12 + (h(3) as f32 / 1000.) * 0.5;
-            let size = if h(4) % 7 == 0 { 2. } else { 1.2 };
-            div()
-                .absolute()
-                .left(gpui::relative(x))
-                .top(gpui::relative(y))
-                .size(px(size))
-                .rounded_full()
-                .bg(alpha(CREAM, bright))
-        });
+        // A viewport into space: the orb itself, live. Always dark, whatever the theme:
+        // it's a window onto the dot's world.
         let live = matches!(phase, Phase::Listening | Phase::Transcribing);
         let deck = div()
             .relative()
@@ -818,7 +816,6 @@ impl Main {
                 gpui::linear_color_stop(rgb(0x07080c), 0.),
                 gpui::linear_color_stop(rgb(0x151824), 1.),
             ))
-            .children(stars)
             .child(
                 div()
                     .relative()
