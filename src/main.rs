@@ -363,7 +363,7 @@ fn main() {
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(5));
             let mut s = state.lock().unwrap();
-            s.draft = "So the plan for Thursday is that we meet the venue people at ten, walk the space, and then decide on the layout before lunch with Priya.".into();
+            s.draft = "So the plan for Thursday is that we meet the venue people at ten, walk the space, and then decide on the layout before lunch with Neil and Emily.".into();
             s.draft_until = Some(Instant::now() + Duration::from_secs(20));
         });
     }
@@ -372,7 +372,7 @@ fn main() {
         let state = state.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(5));
-            let text = "Send the deck to Priya before Thursday and ask about the venue";
+            let text = "Send the deck to Neil and Emily before Thursday";
             state.lock().unwrap().held = Some((text.into(), Instant::now()));
         });
     }
