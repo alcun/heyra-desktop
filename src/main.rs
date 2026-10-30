@@ -609,7 +609,9 @@ fn main() {
                     }
                     // Updated on disk (brew upgrade swaps the app, not the running copy):
                     // at rest, start the new version. Looked at every five seconds.
-                    if frame.is_multiple_of(300) && phase == Phase::Ready && let Some(app) = replaced_bundle() {
+                    // Not while the welcome window is up: that's someone in the middle of something.
+                    let welcoming = cx.windows().iter().any(|w| w.downcast::<onboarding::Onboarding>().is_some());
+                    if frame.is_multiple_of(300) && phase == Phase::Ready && !welcoming && let Some(app) = replaced_bundle() {
                         store::log(&format!("updated on disk: restarting into {}", app.display()));
                         let _ = std::process::Command::new("/bin/sh")
                             .arg("-c")

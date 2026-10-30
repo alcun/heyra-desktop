@@ -445,6 +445,25 @@ impl Slow {
     }
 }
 
+/// The page the next main window opens on, set by `open_main_at`.
+static OPEN_ON: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Open the main window on Settings (to watch a model download, say).
+pub fn open_settings(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
+    OPEN_ON.store(3, Ordering::Relaxed);
+    match cx.windows().into_iter().find_map(|w| w.downcast::<Main>()) {
+        Some(w) => {
+            let _ = w.update(cx, |main, window, cx| {
+                main.page = Page::Settings;
+                window.activate_window();
+                cx.notify();
+            });
+            cx.activate(true);
+        }
+        None => open_main(cx, state, cmds),
+    }
+}
+
 pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
     // Be the active app before the window opens. Opened while another app is active (a
     // click on the dot doesn't activate Heyra), GPUI's window-focus handler deadlocks.
@@ -480,10 +499,10 @@ pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
                     state,
                     cmds,
                     // HEYRA_PAGE=settings (or history, dictionary) opens on that page: for screenshots.
-                    page: match std::env::var("HEYRA_PAGE").as_deref() {
-                        Ok("history") => Page::History,
-                        Ok("dictionary") => Page::Dictionary,
-                        Ok("settings") => Page::Settings,
+                    page: match (OPEN_ON.swap(0, Ordering::Relaxed), std::env::var("HEYRA_PAGE").as_deref()) {
+                        (3, _) | (_, Ok("settings")) => Page::Settings,
+                        (_, Ok("history")) => Page::History,
+                        (_, Ok("dictionary")) => Page::Dictionary,
                         _ => Page::Home,
                     },
                     copied: None,
@@ -1208,6 +1227,8 @@ impl Main {
                         let secs = at.saturating_duration_since(Instant::now()).as_secs() + 1;
                         (format!("RETRYING IN {secs}s"), p().gold)
                     }
+                    // Downloaded: unpacking and test-loading it takes a few seconds more.
+                    (None, Some(done)) if done >= 0.999 => ("SETTING UP".into(), p().gold),
                     (None, Some(done)) => (format!("DOWNLOADING {}%", (done * 100.) as u32), p().gold),
                     (None, None) => ("LOADING".into(), p().gold),
                 }

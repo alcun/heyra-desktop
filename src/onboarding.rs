@@ -377,10 +377,11 @@ impl Render for Onboarding {
             ),
             Step::Try if loading => (
                 "Almost ready".into(),
-                format!(
-                    "Downloading the voice model, once{}",
-                    progress.map(|p| format!(" · {}%", (p * 100.) as u32)).unwrap_or_default()
-                ),
+                match progress {
+                    Some(p) if p >= 0.999 => "Setting up the voice model…".into(),
+                    Some(p) => format!("Downloading the voice model, once · {}%", (p * 100.) as u32),
+                    None => "Downloading the voice model, once".into(),
+                },
                 None,
                 Some("Done"),
             ),
@@ -404,7 +405,14 @@ impl Render for Onboarding {
         let failed_now = failed;
         let act = cx.listener(move |this, _, window, cx| {
             match step {
-                Step::Model if this.models_only => window.remove_window(),
+                // Done: if a model is still coming down, show where it's going.
+                Step::Model if this.models_only => {
+                    let downloading = this.state.lock().unwrap().switching.is_some();
+                    window.remove_window();
+                    if downloading {
+                        crate::ui::open_settings(cx, this.state.clone(), this.cmds.clone());
+                    }
+                }
                 Step::Welcome | Step::Model => this.advance(),
                 Step::Microphone => match mic_now {
                     Mic::Allowed => this.advance(),
