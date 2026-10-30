@@ -235,6 +235,7 @@ pub struct Main {
     seen: u64,
     ticks: u32,
     slow: Slow,
+    fetching: bool,
     /// History, newest first: only the rows on screen are laid out.
     takes: gpui::ListState,
 }
@@ -293,8 +294,10 @@ pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
                     born: Instant::now(),
                     show_other_mics: false,
                     seen: 0,
-                    ticks: 0,
-                    slow: Slow::fetch(),
+                    ticks: 59,
+                    // Filled in by the first poll, off this thread.
+                    slow: Slow::default(),
+                    fetching: false,
                     takes: gpui::ListState::new(0, gpui::ListAlignment::Top, px(600.)),
                 }
             })
@@ -307,19 +310,33 @@ impl Main {
     /// Each frame: redraw only if something shown has changed.
     fn poll(&mut self, cx: &mut Context<Self>) {
         self.ticks = self.ticks.wrapping_add(1);
-        let fetched = self.ticks.is_multiple_of(60) && self.refetch();
+        if self.ticks.is_multiple_of(60) {
+            self.refetch(cx);
+        }
         let seen = self.signature();
-        if fetched || seen != self.seen {
+        if seen != self.seen {
             self.seen = seen;
             cx.notify();
         }
     }
 
-    fn refetch(&mut self) -> bool {
-        let slow = Slow::fetch();
-        let changed = slow != self.slow;
-        self.slow = slow;
-        changed
+    /// Fetch the slow answers on a background thread (asking launchd about open at login
+    /// alone takes ~65 ms), and redraw if they changed. One fetch at a time.
+    fn refetch(&mut self, cx: &mut Context<Self>) {
+        if std::mem::replace(&mut self.fetching, true) {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let slow = cx.background_executor().spawn(async { Slow::fetch() }).await;
+            let _ = this.update(cx, |main: &mut Main, cx| {
+                main.fetching = false;
+                if slow != main.slow {
+                    main.slow = slow;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     /// A hash of everything the pages draw from shared state, coarse where the eye is.
@@ -1032,7 +1049,7 @@ impl Render for Main {
             .flex()
             .size_full()
             .on_mouse_up(gpui::MouseButton::Left, cx.listener(|this, _, _, cx| {
-                this.refetch();
+                this.refetch(cx);
                 cx.notify();
             }))
             .bg(rgb(GROUND))
