@@ -141,8 +141,8 @@ fn tip_pill(text: SharedString, side: Side) -> impl IntoElement {
             blur_radius: px(10.),
             spread_radius: px(0.),
         }])
-        .font_family(MONO)
-        .text_size(px(11.))
+        .font_family(SANS)
+        .text_size(px(12.))
         .line_height(px(14.))
         .text_color(rgb(p().ground))
         .whitespace_nowrap()
@@ -198,9 +198,9 @@ fn tip_overlay(text: SharedString, side: Side) -> Div {
     }
 }
 
-/// Small uppercase mono label, the faceplate's lettering.
+/// A small label in sentence case.
 fn label(text: impl Into<SharedString>) -> Div {
-    div().font_family(MONO).text_size(px(10.5)).text_color(rgb(p().slate)).child(text.into())
+    div().font_family(SANS).text_size(px(12.5)).text_color(rgb(p().slate)).child(text.into())
 }
 
 fn readout(text: impl Into<SharedString>) -> Div {
@@ -241,7 +241,7 @@ fn button(id: impl Into<gpui::ElementId>, text: &'static str) -> Stateful<Div> {
         .rounded(px(6.))
         .border_1()
         .border_color(rgb(p().hair))
-        .font_family(MONO)
+        .font_family(SANS)
         .text_xs()
         .text_color(rgb(p().ink))
         .cursor_pointer()
@@ -454,7 +454,7 @@ fn take(index: usize, entry: &store::Entry, copied: bool, full: bool, lit: bool,
                 .gap(px(4.))
                 .child(label(clock(entry.at)))
                 .child(if copied {
-                    label("COPIED").text_color(rgb(p().gold))
+                    label("Copied").text_color(rgb(p().gold))
                 } else {
                     label(format!("{:.1} s", entry.secs)).text_color(rgb(p().dim))
                 }),
@@ -745,7 +745,7 @@ impl Main {
             }))
             .child(gpui::svg().path(icon).size(px(14.)).text_color(alpha(GOLD, 0.9)))
             .child(div().font_family(SANS).text_size(px(13.)).text_color(alpha(CREAM, 0.88)).whitespace_nowrap().child(short(&text, 30)))
-            .children(status.map(|(t, _)| div().font_family(MONO).text_size(px(10.)).text_color(rgb(GOLD)).child(t)))
+            .children(status.map(|(t, _)| div().font_family(SANS).text_size(px(10.)).text_color(rgb(GOLD)).child(t)))
             .child(gpui::svg().path("icons/chevron.svg").size(px(13.)).text_color(alpha(CREAM, 0.5)))
             .when(open, |d| d.child(div().absolute().top_full().left_0().child(self.menu_panel(id, items, gpui::Corner::TopLeft, cx))))
     }
@@ -763,7 +763,7 @@ impl Main {
                 cx.notify();
             }))
             .child(div().flex_1().text_size(px(15.)).text_color(rgb(p().ink)).child(name))
-            .children(status.map(|(text, color)| div().font_family(MONO).text_xs().text_color(rgb(color)).child(text)))
+            .children(status.map(|(text, color)| div().font_family(SANS).text_xs().text_color(rgb(color)).child(text)))
             .child(div().text_size(px(15.)).text_color(rgb(p().slate)).child(short(&current, 34)))
             .child(gpui::svg().path("icons/chevron.svg").size(px(15.)).text_color(rgb(if open { p().gold } else { p().slate })))
             .child(div().relative().w_0().h_full().when(open, |d| d.child(div().absolute().top_full().right_0().child(menu))))
@@ -862,8 +862,8 @@ impl Main {
             .cursor_pointer()
             .when(active, |d| d.bg(alpha(p().ink, 0.06)))
             .hover(|s| s.bg(alpha(p().ink, 0.04)))
-            .font_family(MONO)
-            .text_size(px(12.5))
+            .font_family(SANS)
+            .text_size(px(13.5))
             .text_color(rgb(color))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.page = page;
@@ -1004,8 +1004,8 @@ impl Main {
                     .flex()
                     .justify_between()
                     .items_end()
-                    .child(div().flex().flex_col().gap_2().child(label("TODAY")).child(big(format!("{} words", grouped(today)))))
-                    .child(label(format!("{} ALL TIME", grouped(words))).text_color(rgb(p().dim))),
+                    .child(div().flex().flex_col().gap_2().child(label("Today")).child(big(format!("{} words", grouped(today)))))
+                    .child(label(format!("{} all time", grouped(words))).text_color(rgb(p().dim))),
             )
             .child(bars);
         // Streak: the last seven days, lit where you dictated.
@@ -1030,12 +1030,12 @@ impl Main {
         let small = div()
             .flex()
             .gap_4()
-            .child(card().flex_1().gap_2().child(label("TIME SAVED")).child(big(saved)))
+            .child(card().flex_1().gap_2().child(label("Time saved")).child(big(saved)))
             .child(
                 card()
                     .flex_1()
                     .gap_2()
-                    .child(label("STREAK"))
+                    .child(label("Streak"))
                     .child(big(format!("{streak} {}", if streak == 1 { "day" } else { "days" })))
                     .child(div().pt_2().child(week)),
             )
@@ -1043,7 +1043,7 @@ impl Main {
                 card()
                     .flex_1()
                     .gap_2()
-                    .child(label("PACE"))
+                    .child(label("Pace"))
                     .child(big(format!("{pace} wpm")))
                     .child(
                         div()
@@ -1051,8 +1051,8 @@ impl Main {
                             .flex()
                             .flex_col()
                             .gap_2()
-                            .child(pace_bar("YOU", pace, rgb(p().gold).into()))
-                            .child(pace_bar("TYPING", 40, alpha(p().ink, 0.16))),
+                            .child(pace_bar("You", pace, rgb(p().gold).into()))
+                            .child(pace_bar("Typing", 40, alpha(p().ink, 0.16))),
                     ),
             );
         let strip = div().flex().flex_col().gap_4().child(words_card).child(small);
@@ -1100,7 +1100,7 @@ impl Main {
         let setup_list = div()
             .flex()
             .flex_col()
-            .child(label(format!("SETUP · {done} OF {} DONE", steps.len())).pb_3())
+            .child(label(format!("Setup · {done} of {} done", steps.len())).pb_3())
             .child(step("s-model", model_ready, steps[0].1, model_detail, None))
             .child(step(
                 "s-mic",
@@ -1111,21 +1111,21 @@ impl Main {
                 } else {
                     "Asked the first time you hold fn.".into()
                 },
-                (checks.mic == Mic::Denied).then_some(("OPEN SETTINGS", setup::PANE_MICROPHONE)),
+                (checks.mic == Mic::Denied).then_some(("Open Settings", setup::PANE_MICROPHONE)),
             ))
             .child(step(
                 "s-ax",
                 steps[2].0,
                 steps[2].1,
                 "Turn on Heyra in Privacy & Security.".into(),
-                Some(("OPEN SETTINGS", setup::PANE_ACCESSIBILITY)),
+                Some(("Open Settings", setup::PANE_ACCESSIBILITY)),
             ))
             .child(step(
                 "s-fn",
                 steps[3].0,
                 steps[3].1,
                 "Set Press 🌐 key to Do nothing.".into(),
-                Some(("KEYBOARD", setup::PANE_KEYBOARD)),
+                Some(("Keyboard", setup::PANE_KEYBOARD)),
             ))
             .child(step("s-take", steps[4].0, steps[4].1, "Hold fn in any text box and talk.".into(), None));
         let setup_done = done == steps.len();
@@ -1148,9 +1148,9 @@ impl Main {
                     .flex()
                     .flex_col()
                     .child(if recent.is_empty() {
-                        group(Some("RECENT"), vec![row("none").child(hint("Hold fn anywhere and talk.")).into_any_element()], None)
+                        group(Some("Recent"), vec![row("none").child(hint("Hold fn anywhere and talk.")).into_any_element()], None)
                     } else {
-                        group(Some("RECENT"), recent, None)
+                        group(Some("Recent"), recent, None)
                     }),
             )
     }
@@ -1251,7 +1251,7 @@ impl Main {
 
         // Microphone: a menu of mics, then keeping it ready.
         let mic = group(
-            Some("MICROPHONE"),
+            Some("Microphone"),
             vec![
                 self.dropdown("mic", "Microphone", current_mic, None, rows, cx),
                 switch("ready", "Keep the mic ready", KEEP_MIC_READY.load(Ordering::Relaxed), |on| {
@@ -1274,22 +1274,22 @@ impl Main {
             .child(div().flex_1().text_size(px(15.)).text_color(rgb(p().ink)).child("Another key"))
             .child(div().text_size(px(15.)).text_color(rgb(if recording { p().gold } else { p().slate })).child(key_text))
             .when(chosen.is_some() && !recording, |d| {
-                d.child(button("clear", "CLEAR").on_click(|_, _, _| {
+                d.child(button("clear", "Clear").on_click(|_, _, _| {
                     crate::hotkey::set_button(None);
                     let settings = store::load_settings();
                     store::save_settings(&store::Settings { button: None, ..settings });
                 }))
             })
-            .child(button("choose", "CHOOSE").on_click(|_, _, _| crate::hotkey::record(true)));
+            .child(button("choose", "Choose").on_click(|_, _, _| crate::hotkey::record(true)));
         let talk_footer = if fn_free {
             "Double-tap for hands-free. Esc cancels."
         } else {
             "fn opens emoji? Set Press 🌐 key to Do nothing."
         };
         let talk = group(
-            Some("PUSH TO TALK"),
+            Some("Push to talk"),
             vec![
-                ink_row("hold", "Hold fn, talk, let go".into()).child(label("FN")).into_any_element(),
+                ink_row("hold", "Hold fn, talk, let go".into()).child(label("fn")).into_any_element(),
                 key_row.into_any_element(),
             ],
             Some(talk_footer.into()),
@@ -1330,7 +1330,7 @@ impl Main {
             } else {
                 items.push(ink_row("ting", if ting_heard { "Heard on this mic".into() } else { "FX mic".into() }).into_any_element());
             }
-            group(Some("FX MIC"), items, note.map(Into::into).or(line.map(Into::into)))
+            group(Some("FX mic"), items, note.map(Into::into).or(line.map(Into::into)))
         });
 
         // Appearance: three choices as rows, the one in use ticked.
@@ -1349,13 +1349,13 @@ impl Main {
                 .into_any_element()
         };
         let appearance = group(
-            Some("APPEARANCE"),
+            Some("Appearance"),
             vec![look("look-dark", "Dark", 0), look("look-light", "Light", 1), look("look-auto", "Match the Mac", 2)],
             None,
         );
 
         let general = group(
-            Some("GENERAL"),
+            Some("General"),
             vec![
                 switch("sounds", "Sounds", crate::sound::enabled(), |on| {
                     crate::sound::set_enabled(on);
@@ -1401,9 +1401,9 @@ impl Main {
             .into_iter()
             .map(|m| {
                 let tag = match m.kind {
-                    crate::mics::Kind::BuiltIn => Some("BUILT-IN"),
-                    crate::mics::Kind::Bluetooth => Some("BLUETOOTH"),
-                    _ if ting_heard && m.name == in_use => Some("FX MIC"),
+                    crate::mics::Kind::BuiltIn => Some("Built-in"),
+                    crate::mics::Kind::Bluetooth => Some("Bluetooth"),
+                    _ if ting_heard && m.name == in_use => Some("FX mic"),
                     _ => None,
                 };
                 (m.name.clone(), tag, Some(m.name))
@@ -1441,7 +1441,7 @@ impl Main {
                             .when(selected, |d| d.bg(rgb(p().gold))),
                     )
                     .child(div().flex_1().text_size(px(15.)).text_color(rgb(if selected { p().ink } else { p().slate })).child(name))
-                    .children(tag.map(|t| div().font_family(MONO).text_xs().text_color(rgb(if t == "FX MIC" { p().gold } else { p().dim })).child(t)))
+                    .children(tag.map(|t| div().font_family(SANS).text_xs().text_color(rgb(if t == "FX mic" { p().gold } else { p().dim })).child(t)))
                     .into_any_element(),
             );
         }
@@ -1507,7 +1507,7 @@ impl Main {
             (None, Some((why, _))) => Some(format!("{why} Heyra tries again by itself.").into()),
             _ => None,
         };
-        group(Some("VOICE MODEL"), rows, footer)
+        group(Some("Voice model"), rows, footer)
     }
 
     /// The models to choose from, as menu rows; the one in use (or on its way) and how
@@ -1521,17 +1521,17 @@ impl Main {
         let status = |choice: &Choice, rest: (String, u32)| -> (String, u32) {
             let busy = switching.as_ref() == Some(choice) || (in_use == *choice && phase == Phase::Loading);
             if error.as_ref().is_some_and(|(c, _)| c == choice) && !busy {
-                ("TRY AGAIN".into(), p().rec)
+                ("Try again".into(), p().rec)
             } else if busy {
                 match (&retry, progress) {
                     (Some((_, at)), _) => {
                         let secs = at.saturating_duration_since(Instant::now()).as_secs() + 1;
-                        (format!("RETRYING IN {secs}s"), p().gold)
+                        (format!("Retrying in {secs} s"), p().gold)
                     }
                     // Downloaded: unpacking and test-loading it takes a few seconds more.
-                    (None, Some(done)) if done >= 0.999 => ("SETTING UP".into(), p().gold),
-                    (None, Some(done)) => (format!("DOWNLOADING {}%", (done * 100.) as u32), p().gold),
-                    (None, None) => ("LOADING".into(), p().gold),
+                    (None, Some(done)) if done >= 0.999 => ("Setting up".into(), p().gold),
+                    (None, Some(done)) => (format!("Downloading {}%", (done * 100.) as u32), p().gold),
+                    (None, None) => ("Loading".into(), p().gold),
                 }
             } else {
                 rest
@@ -1574,9 +1574,9 @@ impl Main {
             let here = self.slow.here.get(i).copied().unwrap_or(false);
             let busy = switching.as_ref() == Some(&choice);
             let (status, color) = status(&choice, if using {
-                ("IN USE".into(), p().gold)
+                ("In use".into(), p().gold)
             } else if here {
-                ("ON THIS MAC".into(), p().dim)
+                ("On this Mac".into(), p().dim)
             } else {
                 (format!("{} MB", m.mb), p().dim)
             });
@@ -1586,9 +1586,9 @@ impl Main {
                     .on_click(move |_, _, _| {
                         let _ = cmds.send(Cmd::UseModel(Choice::Listed(m.id)));
                     })
-                    .child(div().font_family(MONO).text_xs().text_color(rgb(color)).child(status))
+                    .child(div().font_family(SANS).text_xs().text_color(rgb(color)).child(status))
                     .when(here && !using && !busy, |d| {
-                        d.child(button(("remove", i), "REMOVE").on_click(move |_, _, cx| {
+                        d.child(button(("remove", i), "Remove").on_click(move |_, _, cx| {
                             cx.stop_propagation();
                             if let Err(e) = m.remove() {
                                 store::log(&format!("couldn't remove {}: {e}", m.name));
@@ -1605,7 +1605,7 @@ impl Main {
         };
         if let Some(choice @ Choice::Folder(dir)) = &folder {
             let using = in_use == *choice;
-            let (status, color) = status(choice, if using { ("IN USE".into(), p().gold) } else { ("LOADING".into(), p().gold) });
+            let (status, color) = status(choice, if using { ("In use".into(), p().gold) } else { ("Loading".into(), p().gold) });
             let picked = switching.as_ref().map_or(using, |c| c == choice);
             let (cmds, choice) = (self.cmds.clone(), choice.clone());
             rows.push(
@@ -1613,7 +1613,7 @@ impl Main {
                     .on_click(move |_, _, _| {
                         let _ = cmds.send(Cmd::UseModel(choice.clone()));
                     })
-                    .child(div().font_family(MONO).text_xs().text_color(rgb(color)).child(status))
+                    .child(div().font_family(SANS).text_xs().text_color(rgb(color)).child(status))
                     .into_any_element(),
             );
         }
@@ -1680,10 +1680,10 @@ impl Render for Main {
                                     .child(tracked("eyra")),
                             ),
                     )
-                    .child(self.nav("nav-home", "icons/home.svg", "HOME", Page::Home, shown, cx))
-                    .child(self.nav("nav-history", "icons/history.svg", "HISTORY", Page::History, shown, cx))
-                    .child(self.nav("nav-dict", "icons/dictionary.svg", "DICTIONARY", Page::Dictionary, shown, cx))
-                    .child(self.nav("nav-settings", "icons/settings.svg", "SETTINGS", Page::Settings, shown, cx)),
+                    .child(self.nav("nav-home", "icons/home.svg", "Home", Page::Home, shown, cx))
+                    .child(self.nav("nav-history", "icons/history.svg", "History", Page::History, shown, cx))
+                    .child(self.nav("nav-dict", "icons/dictionary.svg", "Dictionary", Page::Dictionary, shown, cx))
+                    .child(self.nav("nav-settings", "icons/settings.svg", "Settings", Page::Settings, shown, cx)),
             )
             .child(
                 div()
@@ -1693,11 +1693,11 @@ impl Render for Main {
                     .gap_1()
                     .whitespace_nowrap()
                     .child(div().flex().items_center().gap_2().child(light(phase)).child(label(match phase {
-                        Phase::Listening => "REC",
-                        Phase::Transcribing => "WRITING",
-                        Phase::Loading => "LOADING",
-                        Phase::Ready => "READY · FN",
-                        Phase::Error => "CHECK HOME",
+                        Phase::Listening => "Listening",
+                        Phase::Transcribing => "Writing",
+                        Phase::Loading => "Loading",
+                        Phase::Ready => "Ready · fn",
+                        Phase::Error => "Check Home",
                     }).opacity(shown)))
                     .child(label(short(&mic, 17)).text_color(rgb(p().dim)).whitespace_nowrap().opacity(shown)),
             );
@@ -2207,7 +2207,7 @@ impl Render for Held {
                     .flex()
                     .flex_col()
                     .gap(px(2.))
-                    .child(label("NOWHERE TO TYPE").text_color(rgb(GOLD)))
+                    .child(label("Nowhere to type").text_color(rgb(GOLD)))
                     .child(div().w_full().font_family(SANS).text_size(px(14.)).text_color(rgb(CREAM)).truncate().child(short(&self.text, 52))),
             )
             .child(
@@ -2218,10 +2218,10 @@ impl Render for Held {
                     .rounded(px(6.))
                     .border_1()
                     .border_color(rgb(GOLD))
-                    .font_family(MONO)
+                    .font_family(SANS)
                     .text_xs()
                     .text_color(rgb(GOLD))
-                    .child("COPY"),
+                    .child("Copy"),
             );
         div().size_full().flex().items_center().justify_center().child(gpui::AnimationExt::with_animation(
             card,

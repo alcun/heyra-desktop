@@ -246,7 +246,7 @@ impl Onboarding {
                                 }),
                         )
                         .when(picked_for_you, |d| {
-                            d.child(div().font_family(MONO).text_size(px(9.5)).text_color(alpha(GOLD, 0.9)).child("FOR YOU"))
+                            d.child(div().font_family(MONO).text_size(px(9.5)).text_color(alpha(GOLD, 0.9)).child("For you"))
                         }),
                 )
                 // Names and notes sit on the bottom, so a name that wraps doesn't push the rest out of line.
@@ -536,9 +536,9 @@ impl Render for Onboarding {
                                 .text_size(px(10.5))
                                 .text_color(alpha(SLATE, 0.8))
                                 .child(match retry_in {
-                                    Some(secs) => format!("VOICE MODEL · RETRYING IN {secs}s"),
-                                    None if p >= 0.999 => "VOICE MODEL · SETTING UP".into(),
-                                    None => format!("VOICE MODEL · {}%", (p * 100.) as u32),
+                                    Some(secs) => format!("Voice model · retrying in {secs} s"),
+                                    None if p >= 0.999 => "Voice model · setting up".into(),
+                                    None => format!("Voice model · {}%", (p * 100.) as u32),
                                 }),
                         )
                         .child(
