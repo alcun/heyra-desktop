@@ -27,6 +27,34 @@ pub fn tap(code: CGKeyCode, command: bool) -> Result<(), String> {
     Ok(())
 }
 
+#[link(name = "ApplicationServices", kind = "framework")]
+unsafe extern "C" {
+    fn AXUIElementCreateSystemWide() -> core_foundation::base::CFTypeRef;
+    fn AXUIElementCopyAttributeValue(
+        element: core_foundation::base::CFTypeRef,
+        attribute: core_foundation::string::CFStringRef,
+        value: *mut core_foundation::base::CFTypeRef,
+    ) -> i32;
+}
+
+/// Nothing on screen has keyboard focus, so a paste would go nowhere. Only a clear
+/// "no focused element" counts: an app that answers badly is given the paste.
+pub fn nowhere_to_type() -> bool {
+    use core_foundation::base::{CFRelease, TCFType};
+    const NO_VALUE: i32 = -25212; // kAXErrorNoValue
+    let attribute = core_foundation::string::CFString::from_static_string("AXFocusedUIElement");
+    unsafe {
+        let system = AXUIElementCreateSystemWide();
+        let mut focused: core_foundation::base::CFTypeRef = std::ptr::null();
+        let error = AXUIElementCopyAttributeValue(system, attribute.as_concrete_TypeRef(), &mut focused);
+        if !focused.is_null() {
+            CFRelease(focused);
+        }
+        CFRelease(system);
+        error == NO_VALUE
+    }
+}
+
 pub fn paste(text: &str) -> Result<(), String> {
     let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
     let previous = clipboard.get_text().ok();

@@ -151,6 +151,20 @@ struct OrbDriver {
     rested: bool,
 }
 
+/// The app bundle this is running from, if a different version has been put in its place.
+fn replaced_bundle() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let app = exe.ancestors().find(|p| p.extension().is_some_and(|e| e == "app"))?.to_path_buf();
+    let plist = std::fs::read_to_string(app.join("Contents/Info.plist")).ok()?;
+    let key = "<key>CFBundleShortVersionString</key>";
+    let after = &plist[plist.find(key)? + key.len()..];
+    let version = after.split("<string>").nth(1)?.split("</string>").next()?.trim();
+    (version != env!("CARGO_PKG_VERSION")).then_some(app)
+}
+
+/// How long a take with nowhere to go is offered to copy.
+const HELD_FOR: Duration = Duration::from_secs(12);
+
 /// How long a toast stays above the dot.
 const TOAST_FOR: Duration = Duration::from_secs(3);
 
@@ -339,6 +353,15 @@ fn main() {
     }
 
     let state = worker::new_state();
+    // `heyra --preview-held`: the app as usual, with a take offered to copy.
+    if args.iter().any(|a| a == "--preview-held") {
+        let state = state.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(5));
+            let text = "Send the deck to Priya before Thursday and ask about the venue";
+            state.lock().unwrap().held = Some((text.into(), Instant::now()));
+        });
+    }
     // `heyra --preview-toast`: the app as usual, with a toast up for design work.
     if args.iter().any(|a| a == "--preview-toast") {
         let state = state.clone();
@@ -467,10 +490,14 @@ fn main() {
         // The caption window: opened the first time it's needed, then kept, faded in and out.
         let mut caption: Option<(gpui::WindowHandle<ui::Caption>, String)> = None;
         let mut caption_shown = false;
+        // A take with nowhere to go, offered to copy: its window, when it was held, the click.
+        let mut held: Option<(gpui::WindowHandle<ui::Held>, Instant)> = None;
+        let held_clicked = std::rc::Rc::new(std::cell::Cell::new(false));
         cx.spawn(async move |cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(16)).await;
                 frame = frame.wrapping_add(1);
+                let offered = state.lock().unwrap().held.clone();
                 let (phase, level, hands_free, note, draft) = {
                     let s = state.lock().unwrap();
                     let talking = matches!(s.phase, Phase::Listening | Phase::Transcribing)
@@ -522,6 +549,38 @@ fn main() {
                             let above = if phase == Phase::Ready { 28. } else { 74. };
                             let view = ui::Toast { lead: lead.clone(), text: text.clone() };
                             toast = ui::open_toast(cx, centre, above, view).map(|h| (h, *at));
+                        }
+                    }
+                    // Updated on disk (brew upgrade swaps the app, not the running copy):
+                    // at rest, start the new version. Looked at every five seconds.
+                    if frame.is_multiple_of(300) && phase == Phase::Ready && let Some(app) = replaced_bundle() {
+                        store::log(&format!("updated on disk: restarting into {}", app.display()));
+                        let _ = std::process::Command::new("/bin/sh")
+                            .arg("-c")
+                            .arg("sleep 1; /usr/bin/open \"$0\"")
+                            .arg(&app)
+                            .spawn();
+                        cx.quit();
+                    }
+                    // A held take: shown until copied, a new take, or HELD_FOR.
+                    let fresh = offered.as_ref().filter(|(_, at)| at.elapsed() < HELD_FOR && phase != Phase::Listening);
+                    let copy = held_clicked.replace(false);
+                    if held.as_ref().map(|(_, at)| *at) != fresh.map(|(_, at)| *at) || copy {
+                        if let Some((h, _)) = held.take() {
+                            let _ = h.update(cx, |_, window, _| window.remove_window());
+                        }
+                        if copy {
+                            if let Some((text, _)) = &offered
+                                && let Ok(mut clipboard) = arboard::Clipboard::new()
+                            {
+                                let _ = clipboard.set_text(text.clone());
+                            }
+                            let mut s = state.lock().unwrap();
+                            s.held = None;
+                            s.toast = Some(("Copied".into(), String::new(), Instant::now()));
+                        } else if let (Some((text, at)), Some(centre)) = (fresh, orb.centre()) {
+                            let view = ui::Held { text: text.clone(), clicked: held_clicked.clone() };
+                            held = ui::open_held(cx, centre, 70., view).map(|h| (h, *at));
                         }
                     }
                     // The words so far, above the orb; redrawn only when they change.

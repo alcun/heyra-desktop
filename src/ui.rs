@@ -838,6 +838,7 @@ impl Main {
                     }))
                     .child(switch("login", "Open at login", self.slow.login, crate::login::set)),
             )
+            .child(label(concat!("HEYRA ", env!("CARGO_PKG_VERSION"))).px_3().text_color(rgb(DIM)))
     }
 
     /// The speech models: Heyra's list, then a folder of your own. Clicking one
@@ -1346,6 +1347,109 @@ impl Render for Caption {
             .text_color(rgb(CREAM))
             .child(tail);
         div().size_full().flex().items_end().justify_center().pb(px(TOAST_MARGIN)).child(card)
+    }
+}
+
+/// The start of `text`, at most `chars` long, ended at a word with "…".
+fn short(text: &str, chars: usize) -> String {
+    if text.chars().count() <= chars {
+        return text.to_string();
+    }
+    let head: String = text.chars().take(chars).collect();
+    let cut = head.rfind(' ').unwrap_or(head.len());
+    format!("{}…", head[..cut].trim_end_matches([',', '.', ';', ':']))
+}
+
+/// A take that had nowhere to go: its words and a button to copy them.
+pub struct Held {
+    pub text: String,
+    pub clicked: Rc<Cell<bool>>,
+}
+
+const HELD_WIDTH: f32 = 460.;
+const HELD_HEIGHT: f32 = 64.;
+
+pub fn open_held(cx: &mut App, centre: (f64, f64), above: f32, held: Held) -> Option<gpui::WindowHandle<Held>> {
+    let (width, height) = (HELD_WIDTH + TOAST_MARGIN * 2., HELD_HEIGHT + TOAST_MARGIN * 2.);
+    let origin = point(px(centre.0 as f32 - width / 2.), px(centre.1 as f32 - above - height / 2.));
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds { origin, size: size(px(width), px(height)) })),
+            titlebar: None,
+            focus: false,
+            show: true,
+            kind: gpui::WindowKind::PopUp,
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            window_background: gpui::WindowBackgroundAppearance::Transparent,
+            ..Default::default()
+        },
+        |_, cx| cx.new(|_| held),
+    )
+    .ok()
+    .inspect(|handle| {
+        let _ = handle.update(cx, |_, window, _| no_shadow(window));
+    })
+}
+
+impl Render for Held {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let clicked = self.clicked.clone();
+        let card = div()
+            .id("held")
+            .w(px(HELD_WIDTH))
+            .h(px(HELD_HEIGHT))
+            .pl(px(18.))
+            .pr(px(12.))
+            .rounded(px(14.))
+            .bg(gpui::linear_gradient(
+                180.,
+                gpui::linear_color_stop(alpha(0x30323c, 0.97), 0.),
+                gpui::linear_color_stop(alpha(GROUND, 0.97), 1.),
+            ))
+            .border_1()
+            .border_color(alpha(GOLD, 0.35))
+            .shadow(vec![gpui::BoxShadow {
+                color: alpha(0x000000, 0.35),
+                offset: point(px(0.), px(4.)),
+                blur_radius: px(14.),
+                spread_radius: px(0.),
+            }])
+            .flex()
+            .items_center()
+            .gap_4()
+            .cursor_pointer()
+            .on_click(move |_, _, _| clicked.set(true))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(label("NOWHERE TO TYPE").text_color(rgb(GOLD)))
+                    .child(div().w_full().font_family(SANS).text_size(px(14.)).text_color(rgb(CREAM)).truncate().child(short(&self.text, 52))),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .px_3()
+                    .py(px(7.))
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_color(rgb(GOLD))
+                    .font_family(MONO)
+                    .text_xs()
+                    .text_color(rgb(GOLD))
+                    .child("COPY"),
+            );
+        div().size_full().flex().items_center().justify_center().child(gpui::AnimationExt::with_animation(
+            card,
+            "held-in",
+            gpui::Animation::new(Duration::from_millis(320)).with_easing(gpui::ease_out_quint()),
+            |card, t| card.opacity(t).mt(px(8. * (1. - t))),
+        ))
     }
 }
 

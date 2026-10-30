@@ -62,6 +62,8 @@ pub struct State {
     /// finished text, shown until `draft_until`.
     pub draft: String,
     pub draft_until: Option<Instant>,
+    /// A take with nowhere to go (nothing had focus), offered to copy, and when.
+    pub held: Option<(String, Instant)>,
 }
 
 pub type Shared = Arc<Mutex<State>>;
@@ -181,6 +183,7 @@ pub fn new_state() -> Shared {
         retry: None,
         draft: String::new(),
         draft_until: None,
+        held: None,
     }))
 }
 
@@ -301,7 +304,12 @@ fn finish(state: &Shared, engine: &crate::engine::Shared, ahead: Option<Ahead>, 
         state.lock().unwrap().toast = Some(("Didn't catch that".into(), String::new(), Instant::now()));
     }
     if !text.is_empty() {
-        if paste {
+        if paste && crate::paste::nowhere_to_type() {
+            store::log("nowhere to paste: held to copy");
+            let mut s = state.lock().unwrap();
+            s.held = Some((text.clone(), Instant::now()));
+            s.draft_until = None;
+        } else if paste {
             match crate::paste::paste(&text) {
                 Ok(()) => store::log("pasted"),
                 Err(e) => store::log(&format!("paste failed: {e}")),
