@@ -391,7 +391,13 @@ pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
     // Be the active app before the window opens. Opened while another app is active (a
     // click on the dot doesn't activate Heyra), GPUI's window-focus handler deadlocks.
     cx.activate(true);
-    let bounds = Bounds::centered(None, size(px(1000.), px(700.)), cx);
+    // Roomy by default, as big as Wispr Flow's, but never more than 90% of the screen.
+    let (mut w, mut h) = (1180., 800.);
+    if let Some(screen) = cx.primary_display().map(|d| d.bounds().size) {
+        w = f32::min(w, f32::from(screen.width) * 0.9);
+        h = f32::min(h, f32::from(screen.height) * 0.9);
+    }
+    let bounds = Bounds::centered(None, size(px(w), px(h)), cx);
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -1323,7 +1329,7 @@ impl Render for Main {
                         .pt(px(44.))
                         .px(px(52.))
                         .when(!own_scroll, |d| d.overflow_y_scroll().pb(px(64.)))
-                        .child(div().w_full().min_w_0().max_w(px(680.)).when(own_scroll, |d| d.h_full()).child(page))
+                        .child(div().w_full().min_w_0().max_w(px(840.)).when(own_scroll, |d| d.h_full()).child(page))
                 }),
             )
     }
