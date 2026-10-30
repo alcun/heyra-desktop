@@ -525,6 +525,8 @@ fn main() {
         // The caption window: opened the first time it's needed, then kept, faded in and out.
         let mut caption: Option<(gpui::WindowHandle<ui::Caption>, String)> = None;
         let mut caption_shown = false;
+        // The words box's ×: hide it now, and stop showing words while talking.
+        let words_closed = std::rc::Rc::new(std::cell::Cell::new(false));
         // A take with nowhere to go, offered to copy: its window, when it was held, the click.
         let mut held: Option<(gpui::WindowHandle<ui::Held>, Instant)> = None;
         let held_clicked = std::rc::Rc::new(std::cell::Cell::new(false));
@@ -620,6 +622,14 @@ fn main() {
                             .spawn();
                         cx.quit();
                     }
+                    if words_closed.replace(false) {
+                        worker::SHOW_WORDS.store(false, std::sync::atomic::Ordering::Relaxed);
+                        store::save_settings(&store::Settings { show_words: false, ..store::load_settings() });
+                        let mut s = state.lock().unwrap();
+                        s.draft.clear();
+                        s.draft_until = None;
+                        s.toast = Some(("Live words off".into(), "Settings turns them back on".into(), Instant::now()));
+                    }
                     // A held take: shown until copied, a new take, or HELD_FOR.
                     let fresh = offered.as_ref().filter(|(_, at)| at.elapsed() < HELD_FOR && phase != Phase::Listening);
                     let copy = held_clicked.replace(false);
@@ -643,7 +653,8 @@ fn main() {
                     }
                     // The words so far, above the orb; redrawn only when they change.
                     if caption.is_none() && !draft.is_empty() && let Some(centre) = orb.centre() {
-                        caption = ui::open_caption(cx, centre, 140., ui::Caption { text: String::new() }).map(|h| (h, String::new()));
+                        let view = ui::Caption { text: String::new(), closed: words_closed.clone() };
+                        caption = ui::open_caption(cx, centre, 140., view).map(|h| (h, String::new()));
                         if let Some((h, _)) = &caption {
                             let _ = h.update(cx, |_, window, _| ui::fade(window, false));
                         }

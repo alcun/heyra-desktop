@@ -1960,6 +1960,8 @@ impl Render for Toast {
 /// One window for the whole run, faded in and out, so it never flickers into being.
 pub struct Caption {
     pub text: String,
+    /// Set when its × is clicked: hide the words, and stop showing them.
+    pub closed: Rc<Cell<bool>>,
 }
 
 /// Fade a window in or out; the window server runs the animation.
@@ -1976,6 +1978,9 @@ pub fn fade(window: &Window, visible: bool) {
             let animator: *mut Object = msg_send![native, animator];
             let alpha: f64 = if visible { 1.0 } else { 0.0 };
             let _: () = msg_send![animator, setAlphaValue: alpha];
+            // Faded out, it must not catch clicks meant for what's under it.
+            let ignore: objc::runtime::BOOL = if visible { objc::runtime::NO } else { objc::runtime::YES };
+            let _: () = msg_send![native, setIgnoresMouseEvents: ignore];
         }
     }
 }
@@ -2005,10 +2010,9 @@ pub fn open_caption(cx: &mut App, centre: (f64, f64), above: f32, caption: Capti
     )
     .ok()
     .inspect(|handle| {
-        let _ = handle.update(cx, |_, window, _| {
-            no_shadow(window);
-            click_through(window);
-        });
+        // Not click-through: the card takes clicks for its ×. Its clear surround still
+        // lets them fall through, as macOS does for fully transparent pixels.
+        let _ = handle.update(cx, |_, window, _| no_shadow(window));
     })
 }
 
@@ -2026,7 +2030,7 @@ impl Render for Caption {
         // Sized to the words, up to two lines, growing up from the bottom. The width is
         // set from the length (the sans at 15 px is about 7.7 px a character): a text left
         // to find its own width is measured unwrapped and spills over the card.
-        let width = (tail.chars().count() as f32 * 7.7 + 44.).clamp(120., CAPTION_WIDTH);
+        let width = (tail.chars().count() as f32 * 7.7 + 74.).clamp(150., CAPTION_WIDTH);
         let card = div()
             .w(px(width))
             .px(px(20.))
@@ -2049,7 +2053,30 @@ impl Render for Caption {
             .text_size(px(15.))
             .line_height(px(24.))
             .text_color(rgb(CREAM))
-            .child(tail);
+            .relative()
+            .pr(px(30.))
+            .child(tail)
+            .child({
+                let closed = self.closed.clone();
+                div()
+                    .id("close-words")
+                    .absolute()
+                    .top(px(8.))
+                    .right(px(8.))
+                    .size(px(18.))
+                    .rounded_full()
+                    .bg(alpha(CREAM, 0.08))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_size(px(11.))
+                    .line_height(px(11.))
+                    .text_color(alpha(CREAM, 0.55))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(alpha(CREAM, 0.16)).text_color(rgb(CREAM)))
+                    .on_click(move |_, _, _| closed.set(true))
+                    .child("✕")
+            });
         div().size_full().flex().items_end().justify_center().pb(px(TOAST_MARGIN)).child(card)
     }
 }
