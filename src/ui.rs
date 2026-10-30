@@ -1922,7 +1922,8 @@ fn click_through(window: &Window) {
     }
 }
 
-/// macOS draws a shadow around even a clear window; the dot's target must not have one.
+/// macOS draws a shadow around even a clear window, and a titled window's top edge;
+/// the floating pieces must have neither.
 #[allow(unexpected_cfgs)]
 fn no_shadow(window: &Window) {
     use objc::runtime::{NO, Object};
@@ -1934,6 +1935,11 @@ fn no_shadow(window: &Window) {
             let view = appkit.ns_view.as_ptr() as *mut Object;
             let native: *mut Object = msg_send![view, window];
             let _: () = msg_send![native, setHasShadow: NO];
+            // GPUI makes these titled windows with the bar hidden; macOS still draws a
+            // titled window's 1 px top edge, a white line on dark screens. Borderless (and
+            // still a non-activating panel) has none.
+            const NONACTIVATING_PANEL: u64 = 1 << 7;
+            let _: () = msg_send![native, setStyleMask: NONACTIVATING_PANEL];
         }
     }
 }
