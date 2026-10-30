@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.0
+
+- Heyra writes while you talk, so your text is ready about half a second after you let go,
+  however long you spoke. A 90-second take used to take 7 seconds.
+- Your words appear above the dot as you talk, and the finished text stays a moment once
+  it's pasted. Turn it off in Settings → Show the words while you talk.
+- A bigger, roomier window. Settings starts with the voice model and says less.
+- Smoother scrolling, and less work while Heyra sits idle.
+- Updating from before 0.4.0: Heyra offers the new voice models once.
+- Fixed: a new install could switch to Parakeet on its second launch.
+- The logo is an h now, and the resting dot has a fine gold ring.
+
 ## 0.4.0
 
 - Choose your voice model on the welcome screen or in Settings: Bark 3.0 Clean (English,

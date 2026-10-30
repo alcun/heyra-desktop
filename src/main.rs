@@ -47,7 +47,7 @@ fn transcribe_live(path: &str) {
     let engine: engine::Shared = std::sync::Arc::new(std::sync::Mutex::new(Box::new(Transducer::load(&dir).expect("load model"))));
     let rate = spec.sample_rate;
     let step = (rate as f32 * 0.03) as usize;
-    let mut ahead = engine::Ahead::new(engine.clone(), rate);
+    let mut ahead = engine::Ahead::new(engine.clone(), rate, true);
     let mut len = 0;
     let mut shown = String::new();
     eprintln!("start");
@@ -464,7 +464,9 @@ fn main() {
         let pressed = [std::rc::Rc::new(std::cell::Cell::new(false)), std::rc::Rc::new(std::cell::Cell::new(false))];
         let mut button_windows: Vec<gpui::WindowHandle<ui::OrbButton>> = Vec::new();
         let mut toast: Option<(gpui::WindowHandle<ui::Toast>, Instant)> = None;
+        // The caption window: opened the first time it's needed, then kept, faded in and out.
         let mut caption: Option<(gpui::WindowHandle<ui::Caption>, String)> = None;
+        let mut caption_shown = false;
         cx.spawn(async move |cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(16)).await;
@@ -523,24 +525,25 @@ fn main() {
                         }
                     }
                     // The words so far, above the orb; redrawn only when they change.
-                    match (&mut caption, draft.is_empty(), orb.centre()) {
-                        (Some((h, _)), true, _) => {
-                            let _ = h.update(cx, |_, window, _| window.remove_window());
-                            caption = None;
+                    if caption.is_none() && !draft.is_empty() && let Some(centre) = orb.centre() {
+                        caption = ui::open_caption(cx, centre, 118., ui::Caption { text: String::new() }).map(|h| (h, String::new()));
+                        if let Some((h, _)) = &caption {
+                            let _ = h.update(cx, |_, window, _| ui::fade(window, false));
                         }
-                        (Some((h, shown)), false, _) if *shown != draft => {
+                    }
+                    if let Some((h, shown)) = &mut caption {
+                        if !draft.is_empty() && *shown != draft {
                             let text = draft.clone();
                             let _ = h.update(cx, |c, window, _| {
                                 c.text = text;
                                 window.refresh();
                             });
-                            *shown = draft;
+                            *shown = draft.clone();
                         }
-                        (None, false, Some(centre)) => {
-                            let view = ui::Caption { text: draft.clone() };
-                            caption = ui::open_caption(cx, centre, 118., view).map(|h| (h, draft));
+                        if caption_shown == draft.is_empty() {
+                            caption_shown = !draft.is_empty();
+                            let _ = h.update(cx, |_, window, _| ui::fade(window, caption_shown));
                         }
-                        _ => {}
                     }
                     for ((_, _, cmd), clicked) in buttons.iter().zip(&pressed) {
                         if clicked.replace(false) {

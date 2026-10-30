@@ -213,6 +213,9 @@ pub struct Settings {
     /// Off, it opens only while recording, so macOS's mic light goes out.
     #[serde(default = "yes")]
     pub keep_mic_ready: bool,
+    /// Show the words above the orb while talking.
+    #[serde(default = "yes")]
+    pub show_words: bool,
     /// The speech model's id, or "folder" for `model_folder`. None: the default.
     #[serde(default)]
     pub model: Option<String>,
@@ -227,7 +230,7 @@ fn yes() -> bool {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { mic: None, keep_last_clip: false, login_offered: false, button: None, sounds: true, mute_while_talking: false, onboarded: false, keep_mic_ready: true, model: None, model_folder: None }
+        Self { mic: None, keep_last_clip: false, login_offered: false, button: None, sounds: true, mute_while_talking: false, onboarded: false, keep_mic_ready: true, show_words: true, model: None, model_folder: None }
     }
 }
 

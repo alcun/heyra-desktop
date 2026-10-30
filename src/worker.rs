@@ -218,6 +218,9 @@ const TAP: Duration = Duration::from_millis(300);
 /// Two taps this close together start hands-free.
 const DOUBLE_TAP: Duration = Duration::from_millis(500);
 
+/// The Settings switch for the words above the orb while talking. Off, no drafts are made.
+pub static SHOW_WORDS: AtomicBool = AtomicBool::new(true);
+
 /// The Settings switch for keeping the microphone open between takes.
 pub static KEEP_MIC_READY: AtomicBool = AtomicBool::new(true);
 
@@ -268,7 +271,7 @@ fn finish(state: &Shared, engine: &crate::engine::Shared, ahead: Option<Ahead>, 
         s.level = 0.0;
     }
     let started = Instant::now();
-    let ahead = ahead.unwrap_or_else(|| Ahead::new(engine.clone(), recorder.sample_rate));
+    let ahead = ahead.unwrap_or_else(|| Ahead::new(engine.clone(), recorder.sample_rate, false));
     let raw = ahead.finish(&samples);
     let text = store::apply_dictionary(&raw, &store::load_dictionary());
     if store::is_scratch_that(&text) {
@@ -289,7 +292,7 @@ fn finish(state: &Shared, engine: &crate::engine::Shared, ahead: Option<Ahead>, 
     let took = started.elapsed().as_secs_f32();
     store::log(&format!("transcribed in {took:.2}s, {} chars", text.len()));
     // The words above the orb end on what was written, and stay a moment to be read.
-    if !text.is_empty() {
+    if !text.is_empty() && SHOW_WORDS.load(Ordering::Relaxed) {
         let mut s = state.lock().unwrap();
         s.draft = text.clone();
         s.draft_until = Some(Instant::now() + CAPTION_LINGERS);
@@ -400,6 +403,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
     let mut mute = Mute::default();
     MUTE_WHILE_TALKING.store(store::load_settings().mute_while_talking, Ordering::Relaxed);
     KEEP_MIC_READY.store(store::load_settings().keep_mic_ready, Ordering::Relaxed);
+    SHOW_WORDS.store(store::load_settings().show_words, Ordering::Relaxed);
     // Microphones come and go: a new one is switched to, as other dictation apps do.
     let mut known: Vec<String> = state.lock().unwrap().devices.iter().map(|m| m.name.clone()).collect();
     let mut scanned = Instant::now();
@@ -454,14 +458,16 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
         // The level shows in Settings too, so a mic can be checked without talking to an app.
         state.lock().unwrap().level = recorder.level();
         if recording {
-            let take = ahead.get_or_insert_with(|| Ahead::new(engine.clone(), recorder.sample_rate));
+            let words = SHOW_WORDS.load(Ordering::Relaxed);
+            let take = ahead.get_or_insert_with(|| Ahead::new(engine.clone(), recorder.sample_rate, words));
             take.feed(recorder.len(), |from| recorder.peek(from));
-            let so_far = take.so_far();
-            let mut s = state.lock().unwrap();
-            if s.draft != so_far {
-                s.draft = so_far;
+            if words {
+                let so_far = take.so_far();
+                let mut s = state.lock().unwrap();
+                if s.draft != so_far {
+                    s.draft = so_far;
+                }
             }
-            drop(s);
             if recorder.seconds() > MAX_TAKE_SECS {
                 recording = false;
                 ignore_up = !hands_free;

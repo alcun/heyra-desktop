@@ -20,7 +20,7 @@ use crate::model::{self, Choice};
 /// Folder picks so far: a check that finishes after a later pick is ignored.
 static FOLDER_PICKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 use crate::store;
-use crate::worker::{Cmd, KEEP_MIC_READY, MUTE_WHILE_TALKING, Phase, Shared};
+use crate::worker::{Cmd, KEEP_MIC_READY, MUTE_WHILE_TALKING, Phase, SHOW_WORDS, Shared};
 use std::sync::atomic::Ordering;
 
 // ---- tokens ----
@@ -361,7 +361,7 @@ impl Main {
             }
         }
         (crate::hotkey::recording(), crate::hotkey::button().map(crate::hotkey::name)).hash(&mut h);
-        (crate::sound::enabled(), KEEP_MIC_READY.load(Ordering::Relaxed), MUTE_WHILE_TALKING.load(Ordering::Relaxed)).hash(&mut h);
+        (crate::sound::enabled(), KEEP_MIC_READY.load(Ordering::Relaxed), MUTE_WHILE_TALKING.load(Ordering::Relaxed), SHOW_WORDS.load(Ordering::Relaxed)).hash(&mut h);
         h.finish()
     }
 
@@ -832,6 +832,10 @@ impl Main {
                         MUTE_WHILE_TALKING.store(on, Ordering::Relaxed);
                         store::save_settings(&store::Settings { mute_while_talking: on, ..store::load_settings() });
                     }))
+                    .child(switch("words", "Show the words while you talk", SHOW_WORDS.load(Ordering::Relaxed), |on| {
+                        SHOW_WORDS.store(on, Ordering::Relaxed);
+                        store::save_settings(&store::Settings { show_words: on, ..store::load_settings() });
+                    }))
                     .child(switch("login", "Open at login", self.slow.login, crate::login::set)),
             )
     }
@@ -1247,8 +1251,27 @@ impl Render for Toast {
 }
 
 /// The words so far, above the orb while talking: the take written as it's heard.
+/// One window for the whole run, faded in and out, so it never flickers into being.
 pub struct Caption {
     pub text: String,
+}
+
+/// Fade a window in or out; the window server runs the animation.
+#[allow(unexpected_cfgs)]
+pub fn fade(window: &Window, visible: bool) {
+    use objc::runtime::Object;
+    use objc::{msg_send, sel, sel_impl};
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let Ok(handle) = HasWindowHandle::window_handle(window) else { return };
+    if let RawWindowHandle::AppKit(appkit) = handle.as_raw() {
+        unsafe {
+            let view = appkit.ns_view.as_ptr() as *mut Object;
+            let native: *mut Object = msg_send![view, window];
+            let animator: *mut Object = msg_send![native, animator];
+            let alpha: f64 = if visible { 1.0 } else { 0.0 };
+            let _: () = msg_send![animator, setAlphaValue: alpha];
+        }
+    }
 }
 
 const CAPTION_WIDTH: f32 = 560.;
@@ -1293,8 +1316,9 @@ impl Render for Caption {
         } else {
             self.text.clone()
         };
+        // Sized to the words, up to two lines, growing up from the bottom.
         let card = div()
-            .w(px(CAPTION_WIDTH))
+            .max_w(px(CAPTION_WIDTH))
             .max_h(px(CAPTION_HEIGHT))
             .px(px(18.))
             .py(px(12.))

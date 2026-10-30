@@ -111,6 +111,7 @@ pub struct Ahead {
     draft: Option<(usize, usize, Piece)>,
     /// The latest finished draft, shown until the next one is ready.
     drafted: Option<(usize, usize, String)>,
+    drafts: bool,
 }
 
 /// A piece of the take: still with the engine, or written.
@@ -129,8 +130,9 @@ impl Piece {
 }
 
 impl Ahead {
-    pub fn new(engine: Shared, sample_rate: u32) -> Self {
-        Self { engine, sample_rate, cut: 0, looked: 0, pieces: Vec::new(), ends: Vec::new(), draft: None, drafted: None }
+    /// `drafts`: also write the latest words roughly while talking, to show them.
+    pub fn new(engine: Shared, sample_rate: u32, drafts: bool) -> Self {
+        Self { engine, sample_rate, cut: 0, looked: 0, pieces: Vec::new(), ends: Vec::new(), draft: None, drafted: None, drafts }
     }
 
     /// How much audio before a cut the next piece hears again. The engine often skips
@@ -200,7 +202,7 @@ impl Ahead {
         let rate = self.sample_rate as f32;
         let every = (DRAFT_EVERY_SECS * rate) as usize;
         let fresh = len >= self.cut + every && self.draft.as_ref().is_none_or(|(_, to, _)| len >= to + every);
-        if self.busy() || !fresh || len - self.cut > (DRAFT_MAX_SECS * rate) as usize {
+        if !self.drafts || self.busy() || !fresh || len - self.cut > (DRAFT_MAX_SECS * rate) as usize {
             return;
         }
         let (engine, rate) = (self.engine.clone(), self.sample_rate);
