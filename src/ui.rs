@@ -608,7 +608,7 @@ impl Main {
                     }
                 })
                 .flex_1()
-                .pb(px(48.)),
+                .min_h_0(),
             )
     }
 
@@ -1039,18 +1039,19 @@ impl Render for Main {
             .font_family(SANS)
             .text_color(rgb(CREAM))
             .child(rail)
-            .child(
+            .child({
+                // History scrolls inside its own list, which needs the page's full height.
+                let own_scroll = self.page == Page::History;
                 div()
                     .id("page")
                     .flex_1()
                     .min_w_0()
                     .h_full()
-                    .overflow_y_scroll()
                     .pt(px(56.))
                     .px(px(56.))
-                    .pb(px(72.))
-                    .child(div().w_full().min_w_0().max_w(px(680.)).child(page)),
-            )
+                    .when(!own_scroll, |d| d.overflow_y_scroll().pb(px(72.)))
+                    .child(div().w_full().min_w_0().max_w(px(680.)).when(own_scroll, |d| d.h_full()).child(page))
+            })
     }
 }
 
