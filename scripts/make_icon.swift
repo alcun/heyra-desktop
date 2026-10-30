@@ -1,4 +1,4 @@
-// Draws Heyra's app icon (assets/AppIcon.icns): the three-bar mark on graphite.
+// Draws Heyra's app icon (assets/AppIcon.icns): the three-bar mark on graphite, tall-short-tall like an h.
 // Run: swift scripts/make_icon.swift
 import AppKit
 
@@ -13,7 +13,7 @@ func png(_ size: Int) -> Data {
     // bars: (x centre, half height, colour)
     let cream = NSColor(red: 0xed/255, green: 0xe0/255, blue: 0xc4/255, alpha: 1)
     let gold = NSColor(red: 0xd9/255, green: 0xa8/255, blue: 0x6a/255, alpha: 1)
-    let bars: [(CGFloat, CGFloat, NSColor)] = [(0.36, 0.10, cream), (0.50, 0.20, gold), (0.64, 0.13, cream)]
+    let bars: [(CGFloat, CGFloat, NSColor)] = [(0.36, 0.20, cream), (0.50, 0.09, gold), (0.64, 0.20, cream)]
     let w = s * 0.075
     for (x, hh, colour) in bars {
         colour.setFill()

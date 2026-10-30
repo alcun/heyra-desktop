@@ -16,12 +16,12 @@ pub enum Action {
     Quit,
 }
 
-/// A small gauge mark: three rounded bars, drawn at 2x for a crisp template icon.
+/// A small gauge mark: three rounded bars, tall-short-tall like an h, drawn at 2x for a crisp template icon.
 fn mark() -> Icon {
     const S: usize = 36;
     let mut rgba = vec![0u8; S * S * 4];
     // (x centre, half height) for each bar
-    let bars = [(10.0f32, 6.0f32), (18.0, 12.0), (26.0, 8.0)];
+    let bars = [(10.0f32, 12.0f32), (18.0, 6.0), (26.0, 12.0)];
     for y in 0..S {
         for x in 0..S {
             let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
