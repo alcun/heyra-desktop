@@ -18,6 +18,7 @@ mod ting;
 mod ting_setup;
 mod tray;
 mod ui;
+mod update;
 mod worker;
 
 use std::borrow::Cow;
@@ -392,6 +393,15 @@ fn main() {
     let welcome = !settings.onboarded || args.iter().any(|a| a == "--onboarding");
     // Set up before there was a model choice: offer the new models once.
     let new_models = !welcome && settings.model.is_none();
+    // Updated since the last run: say so above the dot.
+    let version = env!("CARGO_PKG_VERSION");
+    if settings.last_version.as_deref().is_some_and(|v| v != version) {
+        state.lock().unwrap().toast = Some(("Updated to".into(), version.into(), Instant::now()));
+    }
+    if settings.last_version.as_deref() != Some(version) {
+        store::save_settings(&store::Settings { last_version: Some(version.into()), ..store::load_settings() });
+    }
+    update::start(state.clone());
     // Write the model down now, so the default a first run starts with is still the
     // model on the next launch (once onboarded, an unsaved choice reads as Parakeet).
     if settings.model.is_none() {

@@ -219,6 +219,12 @@ pub struct Settings {
     /// "dark", "light" or "auto" (match the Mac). None: dark.
     #[serde(default)]
     pub appearance: Option<String>,
+    /// The version that last ran: a new one says it's been updated.
+    #[serde(default)]
+    pub last_version: Option<String>,
+    /// A newer version already mentioned (when not installed with Homebrew).
+    #[serde(default)]
+    pub update_offered: Option<String>,
     /// Show the words above the orb while talking.
     #[serde(default = "yes")]
     pub show_words: bool,
@@ -236,7 +242,7 @@ fn yes() -> bool {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { mic: None, keep_last_clip: false, login_offered: false, button: None, sounds: true, mute_while_talking: false, onboarded: false, keep_mic_ready: true, show_words: true, sidebar_narrow: false, appearance: None, model: None, model_folder: None }
+        Self { mic: None, keep_last_clip: false, login_offered: false, button: None, sounds: true, mute_while_talking: false, onboarded: false, keep_mic_ready: true, show_words: true, sidebar_narrow: false, appearance: None, last_version: None, update_offered: None, model: None, model_folder: None }
     }
 }
 

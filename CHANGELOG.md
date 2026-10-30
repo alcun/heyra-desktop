@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.2
+
+- Heyra keeps itself up to date: once a day it checks for a new version and, if you
+  installed it with Homebrew, upgrades and restarts into it by itself. No terminal.
+- Home in pictures: today's words over a fortnight of bars, your streak as the last
+  seven days, your pace against typing.
+- Tooltips that show at once: beside the sidebar icons, above bars and days.
+
 ## 0.5.1
 
 - A new look: a top bar, a sidebar that folds down to icons, more room and fewer words.

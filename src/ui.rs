@@ -175,7 +175,7 @@ fn tip_overlay(text: SharedString, side: Side) -> Div {
     // A pill is 24 tall; its width, near enough, for centring above.
     let width = text.chars().count() as f32 * 7.4 + 18.;
     let pill = gpui::deferred(gpui::anchored().child(match side {
-        Side::Right => div().ml(px(10.)).mt(px(-7.)).child(tip_pill(text)),
+        Side::Right => div().ml(px(10.)).mt(px(-2.)).child(tip_pill(text)),
         Side::Above => div().ml(px(-width / 2.)).mt(px(-32.)).child(tip_pill(text)),
     }))
     .with_priority(1);
