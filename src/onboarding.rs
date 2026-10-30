@@ -537,6 +537,7 @@ impl Render for Onboarding {
                                 .text_color(alpha(SLATE, 0.8))
                                 .child(match retry_in {
                                     Some(secs) => format!("VOICE MODEL · RETRYING IN {secs}s"),
+                                    None if p >= 0.999 => "VOICE MODEL · SETTING UP".into(),
                                     None => format!("VOICE MODEL · {}%", (p * 100.) as u32),
                                 }),
                         )
