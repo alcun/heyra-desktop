@@ -455,7 +455,15 @@ fn main() {
         login::set(true);
         store::save_settings(&store::Settings { login_offered: true, ..store::load_settings() });
     }
-    let app = Application::new();
+    let app = Application::new().with_assets(ui::Icons);
+    ui::APPEARANCE.store(
+        match settings.appearance.as_deref() {
+            Some("light") => 1,
+            Some("auto") => 2,
+            _ => 0,
+        },
+        std::sync::atomic::Ordering::Relaxed,
+    );
     {
         // Clicking the Dock icon brings the main window back after it was closed.
         let state = state.clone();

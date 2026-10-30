@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.1
+
+- After a `brew upgrade`, Heyra restarts into the new version by itself, between takes.
+- With nowhere to type (Finder in front, no text field), your words wait above the dot
+  with a Copy button instead of being pasted into nothing.
+- The words above the dot sit in two clean lines.
+- The version is at the foot of Settings.
+
 ## 0.5.0
 
 - Heyra writes while you talk, so your text is ready about half a second after you let go,
