@@ -88,7 +88,7 @@ pub fn by_id(id: &str) -> Option<&'static Model> {
 }
 
 /// What Heyra listens with: a listed model, or a folder the person picked.
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Choice {
     Listed(&'static str),
     Folder(PathBuf),

@@ -55,22 +55,23 @@ fn readout(text: impl Into<SharedString>) -> Div {
 fn title(text: &'static str) -> Div {
     div()
         .font_family(SANS)
-        .text_xl()
+        .text_size(px(26.))
+        .line_height(px(32.))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(rgb(CREAM))
         .child(text)
 }
 
 fn hint(text: impl Into<SharedString>) -> Div {
-    div().text_sm().text_color(rgb(SLATE)).child(text.into())
+    div().text_size(px(13.)).line_height(px(20.)).text_color(rgb(SLATE)).child(text.into())
 }
 
 fn button(id: impl Into<gpui::ElementId>, text: &'static str) -> Stateful<Div> {
     div()
         .id(id)
-        .px_3()
-        .py_1()
-        .rounded(px(4.))
+        .px_4()
+        .py(px(7.))
+        .rounded(px(6.))
         .border_1()
         .border_color(rgb(HAIR))
         .font_family(MONO)
@@ -99,7 +100,8 @@ fn switch(id: &'static str, text: &'static str, on: bool, set: impl Fn(bool) + '
         .flex()
         .items_center()
         .gap_3()
-        .py_2()
+        .px_3()
+        .py(px(10.))
         .cursor_pointer()
         .on_click(move |_, _, _| set(!on))
         .child(
@@ -111,7 +113,7 @@ fn switch(id: &'static str, text: &'static str, on: bool, set: impl Fn(bool) + '
                 .border_color(rgb(if on { GOLD } else { DIM }))
                 .when(on, |d| d.bg(rgb(GOLD))),
         )
-        .child(div().text_sm().text_color(rgb(if on { CREAM } else { SLATE })).child(text))
+        .child(div().text_size(px(15.)).text_color(rgb(if on { CREAM } else { SLATE })).child(text))
 }
 
 fn meter(count: usize, lit: usize, live: bool, horizontal: bool) -> Div {
@@ -161,6 +163,59 @@ fn grouped(n: usize) -> String {
 
 // ---- main window ----
 
+/// One take: number and time, your words, duration. A click copies it.
+fn take(index: usize, entry: &store::Entry, copied: bool, main: gpui::WeakEntity<Main>) -> AnyElement {
+    let text = entry.text.clone();
+    div()
+        .id(("take", index))
+        .flex()
+        .gap_5()
+        .py_4()
+        .px_3()
+        .border_b_1()
+        .border_color(rgb(HAIR))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(PANEL)))
+        .on_click(move |_, _, cx| {
+            if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                let _ = clipboard.set_text(text.clone());
+            }
+            let _ = main.update(cx, |main, cx| {
+                main.copied = Some(index);
+                cx.notify();
+            });
+        })
+        .child(
+            div()
+                .flex_none()
+                .w(px(64.))
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .child(readout(format!("T-{:03}", index + 1)).text_xs())
+                .child(label(clock(entry.at))),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .font_family(SANS)
+                .text_size(px(15.))
+                .line_height(px(23.))
+                .text_color(rgb(CREAM))
+                .line_clamp(3)
+                .child(entry.text.clone()),
+        )
+        .child(
+            div().flex_none().w(px(64.)).flex().justify_end().child(if copied {
+                label("COPIED").text_color(rgb(GOLD))
+            } else {
+                label(format!("{:.1} s", entry.secs))
+            }),
+        )
+        .into_any_element()
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
     Home,
@@ -176,13 +231,40 @@ pub struct Main {
     copied: Option<usize>,
     born: Instant,
     show_other_mics: bool,
+    /// What the window last drew from: it redraws only when this changes.
+    seen: u64,
+    ticks: u32,
+    slow: Slow,
+    /// History, newest first: only the rows on screen are laid out.
+    takes: gpui::ListState,
+}
+
+/// Answers that cost a system call or a disk read: fetched once a second and after
+/// a click, never per frame, so scrolling stays smooth.
+#[derive(Default, PartialEq)]
+struct Slow {
+    mac_default: String,
+    login: bool,
+    here: Vec<bool>,
+    dictionary: Vec<(String, String)>,
+}
+
+impl Slow {
+    fn fetch() -> Slow {
+        Slow {
+            mac_default: crate::mics::default_name().unwrap_or_else(|| "none".into()),
+            login: crate::login::enabled(),
+            here: model::ALL.iter().map(|m| m.find().is_some()).collect(),
+            dictionary: store::load_dictionary(),
+        }
+    }
 }
 
 pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
     // Be the active app before the window opens. Opened while another app is active (a
     // click on the dot doesn't activate Heyra), GPUI's window-focus handler deadlocks.
     cx.activate(true);
-    let bounds = Bounds::centered(None, size(px(780.), px(540.)), cx);
+    let bounds = Bounds::centered(None, size(px(1000.), px(700.)), cx);
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -191,29 +273,93 @@ pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(14.), px(14.))),
             }),
-            window_min_size: Some(size(px(600.), px(420.))),
+            window_min_size: Some(size(px(760.), px(520.))),
             ..Default::default()
         },
         |_, cx| {
-            cx.new(|_| Main { state, cmds, page: Page::Home, copied: None, born: Instant::now(), show_other_mics: false })
+            cx.new(|cx| {
+                cx.spawn(async move |this, cx| loop {
+                    cx.background_executor().timer(Duration::from_millis(16)).await;
+                    if this.update(cx, |main: &mut Main, cx| main.poll(cx)).is_err() {
+                        break;
+                    }
+                })
+                .detach();
+                Main {
+                    state,
+                    cmds,
+                    page: Page::Home,
+                    copied: None,
+                    born: Instant::now(),
+                    show_other_mics: false,
+                    seen: 0,
+                    ticks: 0,
+                    slow: Slow::fetch(),
+                    takes: gpui::ListState::new(0, gpui::ListAlignment::Top, px(600.)),
+                }
+            })
         },
     )
     .ok();
 }
 
 impl Main {
+    /// Each frame: redraw only if something shown has changed.
+    fn poll(&mut self, cx: &mut Context<Self>) {
+        self.ticks = self.ticks.wrapping_add(1);
+        let fetched = self.ticks.is_multiple_of(60) && self.refetch();
+        let seen = self.signature();
+        if fetched || seen != self.seen {
+            self.seen = seen;
+            cx.notify();
+        }
+    }
+
+    fn refetch(&mut self) -> bool {
+        let slow = Slow::fetch();
+        let changed = slow != self.slow;
+        self.slow = slow;
+        changed
+    }
+
+    /// A hash of everything the pages draw from shared state, coarse where the eye is.
+    fn signature(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        use std::mem::discriminant;
+        let mut h = std::hash::DefaultHasher::new();
+        {
+            let s = self.state.lock().unwrap();
+            discriminant(&s.phase).hash(&mut h);
+            (&s.message, &s.blocker, s.history.len()).hash(&mut h);
+            (((s.level * 1.15).min(1.0) * 32.0) as u32).hash(&mut h);
+            s.devices.iter().for_each(|d| d.name.hash(&mut h));
+            (&s.mic, &s.mic_in_use, s.sample_rate).hash(&mut h);
+            s.progress.map(|p| (p * 1000.0) as u32).hash(&mut h);
+            (discriminant(&s.checks.mic), s.checks.accessibility, s.checks.fn_free).hash(&mut h);
+            (s.ting_heard, s.ting_disk, &s.ting_note).hash(&mut h);
+            (&s.model, &s.switching, &s.model_error).hash(&mut h);
+            s.retry.as_ref().map(|(why, at)| (why, at.saturating_duration_since(Instant::now()).as_secs())).hash(&mut h);
+            if s.phase == Phase::Transcribing {
+                ((self.born.elapsed().as_secs_f32() * 24.0) as u32).hash(&mut h);
+            }
+        }
+        (crate::hotkey::recording(), crate::hotkey::button().map(crate::hotkey::name)).hash(&mut h);
+        (crate::sound::enabled(), KEEP_MIC_READY.load(Ordering::Relaxed), MUTE_WHILE_TALKING.load(Ordering::Relaxed)).hash(&mut h);
+        h.finish()
+    }
+
     fn nav(&self, id: &'static str, text: &'static str, page: Page, cx: &mut Context<Self>) -> impl IntoElement {
         let active = self.page == page;
         div()
             .id(id)
             .flex()
             .items_center()
-            .gap_2()
-            .px_3()
-            .py(px(7.))
+            .gap_3()
+            .px_5()
+            .py(px(10.))
             .cursor_pointer()
             .font_family(MONO)
-            .text_xs()
+            .text_size(px(12.5))
             .text_color(rgb(if active { CREAM } else { SLATE }))
             .hover(|s| s.text_color(rgb(CREAM)))
             .on_click(cx.listener(move |this, _, _, cx| {
@@ -221,66 +367,8 @@ impl Main {
                 this.copied = None;
                 cx.notify();
             }))
-            .child(div().w(px(2.)).h(px(12.)).bg(rgb(if active { GOLD } else { RAIL })))
+            .child(div().w(px(2.)).h(px(14.)).bg(rgb(if active { GOLD } else { RAIL })))
             .child(text)
-    }
-
-    /// One take: number and time, your words, duration.
-    fn take(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
-        let s = self.state.lock().unwrap();
-        let entry = &s.history[index];
-        let text = entry.text.clone();
-        let copied = self.copied == Some(index);
-        div()
-            .id(("take", index))
-            .flex()
-            .gap_4()
-            .py_3()
-            .px_2()
-            .border_b_1()
-            .border_color(rgb(HAIR))
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(PANEL)))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                    let _ = clipboard.set_text(text.clone());
-                }
-                this.copied = Some(index);
-                cx.notify();
-            }))
-            .child(
-                div()
-                    .flex_none()
-                    .w(px(64.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.))
-                    .child(readout(format!("T-{:03}", index + 1)).text_xs())
-                    .child(label(clock(entry.at))),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .font_family(SANS)
-                    .text_sm()
-                    .line_height(px(21.))
-                    .text_color(rgb(CREAM))
-                    .line_clamp(3)
-                    .child(entry.text.clone()),
-            )
-            .child(
-                div().flex_none().w(px(64.)).flex().justify_end().child(if copied {
-                    label("COPIED").text_color(rgb(GOLD))
-                } else {
-                    label(format!("{:.1} s", entry.secs))
-                }),
-            )
-            .into_any_element()
-    }
-
-    fn takes(&self, indices: impl Iterator<Item = usize>, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        indices.map(|i| self.take(i, cx)).collect()
     }
 
     fn home(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -333,9 +421,9 @@ impl Main {
         let deck = div()
             .flex()
             .flex_col()
-            .gap_3()
-            .p_4()
-            .rounded(px(6.))
+            .gap_4()
+            .p_6()
+            .rounded(px(10.))
             .bg(rgb(PANEL))
             .border_1()
             .border_color(rgb(HAIR))
@@ -354,7 +442,7 @@ impl Main {
                     )
                     .child(meter(SEGMENTS, lit, phase == Phase::Listening, true)),
             )
-            .child(div().min_w_0().font_family(SANS).text_color(rgb(CREAM)).child(message))
+            .child(div().min_w_0().font_family(SANS).text_size(px(17.)).line_height(px(25.)).text_color(rgb(CREAM)).child(message))
             .child(
                 div()
                     .flex()
@@ -376,17 +464,17 @@ impl Main {
                 .min_w_0()
                 .flex()
                 .flex_col()
-                .gap_1()
-                .px_4()
-                .py_3()
+                .gap_2()
+                .px_5()
+                .py_4()
                 .child(label(name))
-                .child(readout(value).text_lg())
+                .child(readout(value).text_size(px(22.)))
         };
         let strip = div()
             .flex()
             .border_1()
             .border_color(rgb(HAIR))
-            .rounded(px(6.))
+            .rounded(px(10.))
             .child(cell("TODAY", format!("{} w", grouped(today))))
             .child(div().w(px(1.)).bg(rgb(HAIR)))
             .child(cell("TOTAL", format!("{} w", grouped(words))))
@@ -401,7 +489,7 @@ impl Main {
                 .flex()
                 .items_center()
                 .gap_3()
-                .py_2()
+                .py_3()
                 .border_b_1()
                 .border_color(rgb(HAIR))
                 .child(
@@ -416,7 +504,7 @@ impl Main {
                         .min_w_0()
                         .flex()
                         .flex_col()
-                        .child(div().text_sm().text_color(rgb(if done { SLATE } else { CREAM })).child(name))
+                        .child(div().text_size(px(15.)).text_color(rgb(if done { SLATE } else { CREAM })).child(name))
                         .when(!done, |d| d.child(hint(detail))),
                 )
                 .when_some(action.filter(|_| !done), |d, (text, pane)| {
@@ -424,7 +512,7 @@ impl Main {
                 })
         };
         let model_detail = match progress {
-            Some(p) => format!("Downloading once, {:.0}% done. After this Heyra never goes online.", p * 100.0),
+            Some(p) => format!("Downloading, {:.0}%. Only this once.", p * 100.0),
             None => "Loading…".to_string(),
         };
         let steps = [
@@ -438,7 +526,7 @@ impl Main {
         let setup_list = div()
             .flex()
             .flex_col()
-            .child(label(format!("SETUP · {done} OF {} DONE", steps.len())).pb_2())
+            .child(label(format!("SETUP · {done} OF {} DONE", steps.len())).pb_3())
             .child(step("s-model", model_ready, steps[0].1, model_detail, None))
             .child(step(
                 "s-mic",
@@ -468,11 +556,15 @@ impl Main {
             .child(step("s-take", steps[4].0, steps[4].1, "Click into any text box, hold fn, say a sentence, let go.".into(), None));
         let setup_done = done == steps.len();
 
-        let recent: Vec<usize> = (0..count).rev().take(6).collect();
+        let me = cx.entity().downgrade();
+        let recent: Vec<AnyElement> = {
+            let s = self.state.lock().unwrap();
+            (0..count).rev().take(6).map(|i| take(i, &s.history[i], self.copied == Some(i), me.clone())).collect()
+        };
         div()
             .flex()
             .flex_col()
-            .gap_5()
+            .gap_8()
             .child(title("Home"))
             .child(deck)
             .when(!setup_done, |d| d.child(setup_list))
@@ -481,34 +573,54 @@ impl Main {
                 div()
                     .flex()
                     .flex_col()
-                    .child(label(if recent.is_empty() { "NO TAKES YET" } else { "RECENT TAKES" }).pb_2())
+                    .child(label(if recent.is_empty() { "NO TAKES YET" } else { "RECENT" }).pb_2())
                     .when(recent.is_empty(), |d| {
-                        d.child(hint("Hold fn in any app and talk. Let go and your words are typed where the cursor is."))
+                        d.child(hint("Hold fn anywhere and talk. Let go to type it."))
                     })
-                    .children(self.takes(recent.into_iter(), cx)),
+                    .children(recent),
             )
     }
 
     fn history(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let count = self.state.lock().unwrap().history.len();
+        // New takes arrive at the top; keep the rows already measured.
+        let known = self.takes.item_count();
+        if count > known {
+            self.takes.splice(0..0, count - known);
+        } else if count < known {
+            self.takes.reset(count);
+        }
+        let (state, copied, me) = (self.state.clone(), self.copied, cx.entity().downgrade());
         div()
+            .size_full()
             .flex()
             .flex_col()
-            .gap_4()
+            .gap_6()
             .child(title("History"))
-            .child(hint("Every take, kept on this Mac only. Click one to copy it."))
-            .child(div().flex().flex_col().children(self.takes((0..count).rev(), cx)))
+            .child(hint("Kept on this Mac. Click one to copy it."))
+            .child(
+                gpui::list(self.takes.clone(), move |row, _, _| {
+                    let s = state.lock().unwrap();
+                    let i = s.history.len().saturating_sub(row + 1);
+                    match s.history.get(i) {
+                        Some(entry) => take(i, entry, copied == Some(i), me.clone()),
+                        None => div().into_any_element(),
+                    }
+                })
+                .flex_1()
+                .pb(px(48.)),
+            )
     }
 
     fn dictionary(&self) -> impl IntoElement {
-        let rules = store::load_dictionary();
+        let rules = self.slow.dictionary.clone();
         let empty = rules.is_empty();
         div()
             .flex()
             .flex_col()
-            .gap_4()
+            .gap_6()
             .child(title("Dictionary"))
-            .child(hint("Words Heyra mishears, fixed every time. One rule per line: heard => meant."))
+            .child(hint("Fix words Heyra mishears. One per line: heard => meant."))
             .child(div().flex().child(button("edit-dict", "EDIT DICTIONARY").on_click(|_, _, _| {
                 let _ = std::process::Command::new("open").arg("-t").arg(store::dictionary_path()).spawn();
             })))
@@ -521,7 +633,7 @@ impl Main {
                         div()
                             .flex()
                             .gap_3()
-                            .py_2()
+                            .py_3()
                             .border_b_1()
                             .border_color(rgb(HAIR))
                             .child(div().w(px(220.)).font_family(MONO).text_sm().text_color(rgb(SLATE)).child(heard))
@@ -536,7 +648,7 @@ impl Main {
             let s = self.state.lock().unwrap();
             (s.devices.clone(), s.mic.clone(), s.mic_in_use.clone(), s.ting_heard, s.level)
         };
-        let mac_default = crate::mics::default_name().unwrap_or_else(|| "none".into());
+        let mac_default = &self.slow.mac_default;
         // Real mics first; the Mac's own choice; then phones and virtual devices, folded away.
         let (real, other): (Vec<_>, Vec<_>) = devices.into_iter().partition(|m| m.kind != crate::mics::Kind::Other);
         let mut options: Vec<(String, Option<&'static str>, Option<String>)> = real
@@ -551,7 +663,7 @@ impl Main {
                 (m.name.clone(), tag, Some(m.name))
             })
             .collect();
-        options.push((format!("Same as Mac's Sound settings ({mac_default})"), None, None));
+        options.push((format!("Same as the Mac ({mac_default})"), None, None));
         let other_count = other.len();
         if self.show_other_mics {
             options.extend(other.into_iter().map(|m| (m.name.clone(), None, Some(m.name))));
@@ -566,7 +678,8 @@ impl Main {
                     .flex()
                     .items_center()
                     .gap_3()
-                    .py_2()
+                    .py_3()
+                    .px_3()
                     .border_b_1()
                     .border_color(rgb(HAIR))
                     .cursor_pointer()
@@ -584,7 +697,7 @@ impl Main {
                             .border_color(rgb(if selected { GOLD } else { DIM }))
                             .when(selected, |d| d.bg(rgb(GOLD))),
                     )
-                    .child(div().flex_1().text_sm().text_color(rgb(if selected { CREAM } else { SLATE })).child(name))
+                    .child(div().flex_1().text_size(px(15.)).text_color(rgb(if selected { CREAM } else { SLATE })).child(name))
                     .children(tag.map(|t| div().font_family(MONO).text_xs().text_color(rgb(if t == "FX MIC" { GOLD } else { DIM })).child(t)))
                     .when(selected, |d| d.child(meter(10, ((level * 1.15).min(1.0) * 10.) as usize, true, true)))
                     .into_any_element(),
@@ -595,7 +708,8 @@ impl Main {
             rows.push(
                 div()
                     .id("other-mics")
-                    .pt_2()
+                    .pt_3()
+                    .px_3()
                     .font_family(MONO)
                     .text_xs()
                     .text_color(rgb(SLATE))
@@ -609,43 +723,47 @@ impl Main {
                     .into_any_element(),
             );
         }
-        let section = |name: &'static str| div().flex().flex_col().gap_2().child(label(name));
+        let section = |name: &'static str| div().flex().flex_col().gap_2().child(label(name).px_3().pb_1());
+        let fn_free = self.state.lock().unwrap().checks.fn_free;
+        let (disk, note) = {
+            let s = self.state.lock().unwrap();
+            (s.ting_disk, s.ting_note.clone())
+        };
         div()
             .flex()
             .flex_col()
-            .gap_6()
+            .gap(px(44.))
             .child(title("Settings"))
+            .child(self.models(cx))
             .child(
                 section("MICROPHONE")
                     .child(div().flex().flex_col().children(rows))
-                    .child(hint("Plug in a mic and Heyra switches to it."))
-                    .child(switch("ready", "Keep the mic ready", KEEP_MIC_READY.load(Ordering::Relaxed), |on| {
+                    .child(div().pt_2().child(switch("ready", "Keep the mic ready", KEEP_MIC_READY.load(Ordering::Relaxed), |on| {
                         KEEP_MIC_READY.store(on, Ordering::Relaxed);
                         store::save_settings(&store::Settings { keep_mic_ready: on, ..store::load_settings() });
-                    }))
-                    .child(hint("Off: the mic opens only while you talk, so the orange mic light goes out, but the first moment can be missed. Plugged-in mics, like the FX mic, always stay ready.")),
+                    })))
+                    .child(hint("Off turns the mic light out between takes, but can miss your first word.").px_3()),
             )
-            .child(self.models(cx))
             .child(
                 section("PUSH TO TALK")
-                    .child(div().text_sm().text_color(rgb(CREAM)).child("Hold fn, talk, let go."))
-                    .child(hint("Double-tap fn for hands-free; tap fn or ✓ to paste, ✕ to keep it in History only."))
-                    .child(hint("Esc throws a take away. End with \"press enter\" and Heyra presses it after pasting."))
+                    .child(div().px_3().text_size(px(15.)).text_color(rgb(CREAM)).child("Hold fn, talk, let go."))
+                    .child(hint("Double-tap fn for hands-free. Esc cancels. Say \"press enter\" to send.").px_3())
+                    .when(!fn_free, |d| d.child(hint("fn opens emoji? Keyboard settings → Press 🌐 key to → Do nothing.").px_3()))
                     .child({
                         let recording = crate::hotkey::recording();
                         let chosen = crate::hotkey::button();
                         let text = if recording {
-                            "Press the key or mouse button to use (esc cancels)…".to_string()
+                            "Press a key or mouse button… (esc cancels)".to_string()
                         } else {
-                            chosen.map_or("Another button: none".into(), |b| format!("Another button: {}", crate::hotkey::name(b)))
+                            chosen.map_or("Also: none".into(), |b| format!("Also: {}", crate::hotkey::name(b)))
                         };
                         div()
                             .flex()
                             .items_center()
                             .gap_3()
-                            .pt_1()
-                            .child(div().text_sm().text_color(rgb(if recording { GOLD } else { CREAM })).child(text))
-                            .child(button("choose", "CHOOSE").on_click(|_, _, _| crate::hotkey::record(true)))
+                            .pt_3()
+                            .px_3()
+                            .child(div().flex_1().text_size(px(15.)).text_color(rgb(if recording { GOLD } else { SLATE })).child(text))
                             .when(chosen.is_some() && !recording, |d| {
                                 d.child(button("clear", "CLEAR").on_click(|_, _, _| {
                                     crate::hotkey::set_button(None);
@@ -653,59 +771,52 @@ impl Main {
                                     store::save_settings(&store::Settings { button: None, ..settings });
                                 }))
                             })
-                    })
-                    .child(hint("Any key, key combo or extra mouse button: a foot pedal, a macro pad, a mic's button that types a key."))
-                    .child(hint(if ting_heard {
-                        "FX mic heard on this microphone: squeeze to talk, bottom button for Enter, middle to undo."
-                    } else {
-                        "A Teenage Engineering FX mic (TING) works too: choose its line-in as the microphone, then squeeze."
-                    }))
-                    .child(hint("If fn opens the emoji picker: System Settings → Keyboard → Press 🌐 key to → Do nothing.")),
+                            .child(button("choose", "CHOOSE").on_click(|_, _, _| crate::hotkey::record(true)))
+                    }),
             )
-            .child({
-                let (disk, note) = {
-                    let s = self.state.lock().unwrap();
-                    (s.ting_disk, s.ting_note.clone())
-                };
+            // Only when there's an FX mic to talk about.
+            .when(ting_heard || disk.is_some() || note.is_some(), |d| {
                 let line = match disk {
                     None if note.is_some() => None,
-                    None => Some("Plug your FX mic in over USB-C to set it up for Heyra. Once per mic."),
-                    Some(false) => Some("FX mic plugged in. Setting it up adds a small script and four tones to its disk; its own files are backed up first."),
-                    Some(true) => Some("This FX mic is set up. Unplug it, press the button above its USB port, then squeeze."),
+                    None => Some("Squeeze to talk. Bottom button: Enter. Middle: undo."),
+                    Some(false) => Some("Plugged in. Setting up adds a script and four tones; its files are backed up first."),
+                    Some(true) => Some("Set up. Unplug it, press the button above its USB port, then squeeze."),
                 };
                 let state = self.state.clone();
-                section("FX MIC · TING")
-                    .children(line.map(|l| div().text_sm().text_color(rgb(CREAM)).child(l)))
-                    .when(disk == Some(false), |d| {
-                        d.child(div().flex().pt_1().child(button("ting-setup", "SET UP THIS FX MIC").on_click(move |_, _, _| {
-                            let state = state.clone();
-                            std::thread::spawn(move || {
-                                let note = match crate::ting_setup::disk().map(|d| crate::ting_setup::set_up(&d)) {
-                                    Some(Ok(backup)) => format!(
-                                        "Done. Unplug it, press the button above its USB port, then squeeze. Its old files: {}",
-                                        backup.display()
-                                    ),
-                                    Some(Err(e)) => format!("Couldn't set it up: {e}"),
-                                    None => "The FX mic was unplugged.".into(),
-                                };
-                                state.lock().unwrap().ting_note = Some(note);
-                            });
-                        })))
-                    })
-                    .children(note.map(|n| div().text_sm().text_color(rgb(CREAM)).child(n)))
+                d.child(
+                    section("FX MIC")
+                        .children(line.map(|l| hint(l).px_3()))
+                        .when(disk == Some(false), |d| {
+                            d.child(div().flex().pt_1().px_3().child(button("ting-setup", "SET UP THIS FX MIC").on_click(move |_, _, _| {
+                                let state = state.clone();
+                                std::thread::spawn(move || {
+                                    let note = match crate::ting_setup::disk().map(|d| crate::ting_setup::set_up(&d)) {
+                                        Some(Ok(backup)) => format!(
+                                            "Done. Unplug it, press the button above its USB port, then squeeze. Old files: {}",
+                                            backup.display()
+                                        ),
+                                        Some(Err(e)) => format!("Couldn't set it up: {e}"),
+                                        None => "The FX mic was unplugged.".into(),
+                                    };
+                                    state.lock().unwrap().ting_note = Some(note);
+                                });
+                            })))
+                        })
+                        .children(note.map(|n| hint(n).px_3())),
+                )
             })
             .child(
-                section("SOUND")
-                    .child(switch("sounds", "Soft click when a take starts and ends", crate::sound::enabled(), |on| {
+                section("GENERAL")
+                    .child(switch("sounds", "Click when a take starts and ends", crate::sound::enabled(), |on| {
                         crate::sound::set_enabled(on);
                         store::save_settings(&store::Settings { sounds: on, ..store::load_settings() });
                     }))
-                    .child(switch("mute", "Mute the Mac's sound while you talk", MUTE_WHILE_TALKING.load(Ordering::Relaxed), |on| {
+                    .child(switch("mute", "Mute the Mac while you talk", MUTE_WHILE_TALKING.load(Ordering::Relaxed), |on| {
                         MUTE_WHILE_TALKING.store(on, Ordering::Relaxed);
                         store::save_settings(&store::Settings { mute_while_talking: on, ..store::load_settings() });
-                    })),
+                    }))
+                    .child(switch("login", "Open at login", self.slow.login, crate::login::set)),
             )
-            .child(section("START").child(switch("login", "Open Heyra at login", crate::login::enabled(), crate::login::set)))
     }
 
     /// The speech models: Heyra's list, then a folder of your own. Clicking one
@@ -739,7 +850,8 @@ impl Main {
                 .flex()
                 .items_center()
                 .gap_3()
-                .py_2()
+                .py_3()
+                .px_3()
                 .border_b_1()
                 .border_color(rgb(HAIR))
                 .cursor_pointer()
@@ -758,15 +870,16 @@ impl Main {
                         .flex_1()
                         .flex()
                         .flex_col()
-                        .child(div().text_sm().text_color(rgb(if selected { CREAM } else { SLATE })).child(name))
-                        .child(div().text_xs().text_color(rgb(DIM)).child(note)),
+                        .gap(px(2.))
+                        .child(div().text_size(px(15.)).text_color(rgb(if selected { CREAM } else { SLATE })).child(name))
+                        .child(div().text_size(px(13.)).text_color(rgb(DIM)).child(note)),
                 )
         };
         let mut rows = Vec::new();
         for (i, m) in model::ALL.iter().enumerate() {
             let choice = Choice::Listed(m.id);
             let using = in_use == choice;
-            let here = m.find().is_some();
+            let here = self.slow.here.get(i).copied().unwrap_or(false);
             let busy = switching.as_ref() == Some(&choice);
             let (status, color) = status(&choice, if using {
                 ("IN USE".into(), GOLD)
@@ -813,7 +926,7 @@ impl Main {
             );
         }
         let (cmds, state) = (self.cmds.clone(), self.state.clone());
-        let choose = button("model-folder", "USE A MODEL FOLDER…").on_click(cx.listener(move |_, _, _, cx| {
+        let choose = button("model-folder", "USE YOUR OWN…").on_click(cx.listener(move |_, _, _, cx| {
             let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
                 files: false,
                 directories: true,
@@ -846,14 +959,13 @@ impl Main {
             .flex()
             .flex_col()
             .gap_2()
-            .child(label("VOICE MODEL"))
+            .child(label("VOICE MODEL").px_3().pb_1())
             .child(div().flex().flex_col().children(rows))
             .children(error.map(|(c, e)| div().text_sm().text_color(rgb(REC)).child(format!("{}: {e}", c.name()))))
             .children(retry.map(|(why, _)| div().text_sm().text_color(rgb(SLATE)).child(format!("{why} Heyra tries again by itself."))))
-            .child(div().flex().pt_1().gap_2().child(choose).child(button("data", "OPEN DATA FOLDER").on_click(|_, _, _| {
+            .child(div().flex().pt_3().px_3().gap_2().child(choose).child(button("data", "OPEN DATA FOLDER").on_click(|_, _, _| {
                 let _ = std::process::Command::new("open").arg(store::dir()).spawn();
             })))
-            .child(hint("Your own: a sherpa-onnx transducer folder (encoder, decoder, joiner .onnx and tokens.txt)."))
     }
 }
 
@@ -870,7 +982,7 @@ impl Render for Main {
             Page::Settings => self.settings(cx).into_any_element(),
         };
         let rail = div()
-            .w(px(172.))
+            .w(px(212.))
             .h_full()
             .flex_none()
             .flex()
@@ -879,8 +991,8 @@ impl Render for Main {
             .bg(rgb(RAIL))
             .border_r_1()
             .border_color(rgb(HAIR))
-            .pt(px(52.))
-            .pb_4()
+            .pt(px(60.))
+            .pb_6()
             .child(
                 div()
                     .flex()
@@ -888,8 +1000,8 @@ impl Render for Main {
                     .gap_1()
                     .child(
                         div()
-                            .px_4()
-                            .pb_5()
+                            .px_5()
+                            .pb_8()
                             .flex()
                             .flex_col()
                             .gap(px(2.))
@@ -903,7 +1015,7 @@ impl Render for Main {
             )
             .child(
                 div()
-                    .px_4()
+                    .px_5()
                     .flex()
                     .flex_col()
                     .gap_1()
@@ -919,6 +1031,10 @@ impl Render for Main {
         div()
             .flex()
             .size_full()
+            .on_mouse_up(gpui::MouseButton::Left, cx.listener(|this, _, _, cx| {
+                this.refetch();
+                cx.notify();
+            }))
             .bg(rgb(GROUND))
             .font_family(SANS)
             .text_color(rgb(CREAM))
@@ -930,10 +1046,10 @@ impl Render for Main {
                     .min_w_0()
                     .h_full()
                     .overflow_y_scroll()
-                    .pt(px(44.))
-                    .px_8()
-                    .pb_8()
-                    .child(div().w_full().min_w_0().max_w(px(720.)).child(page)),
+                    .pt(px(56.))
+                    .px(px(56.))
+                    .pb(px(72.))
+                    .child(div().w_full().min_w_0().max_w(px(680.)).child(page)),
             )
     }
 }

@@ -44,16 +44,27 @@ pub struct Onboarding {
     frame: Option<Arc<RenderImage>>,
     /// Takes in History when "Try it" began; one more means it worked.
     takes_before: usize,
+    /// Only the model step, for installs from before there was a choice.
+    models_only: bool,
 }
 
 pub fn open(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
+    open_at(cx, state, cmds, false);
+}
+
+/// The model step on its own, once, for someone updating from before model choice.
+pub fn open_models(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
+    open_at(cx, state, cmds, true);
+}
+
+fn open_at(cx: &mut App, state: Shared, cmds: Sender<Cmd>, models_only: bool) {
     cx.activate(true); // before the window: see ui::open_main
     let bounds = Bounds::centered(None, size(px(560.), px(520.)), cx);
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(gpui::TitlebarOptions {
-                title: Some("Welcome to Heyra".into()),
+                title: Some(if models_only { "Heyra" } else { "Welcome to Heyra" }.into()),
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(14.), px(14.))),
             }),
@@ -64,13 +75,14 @@ pub fn open(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
             cx.new(|_| Onboarding {
                 state,
                 cmds,
-                step: Step::Welcome,
+                step: if models_only { Step::Model } else { Step::Welcome },
                 gpu: Gpu::new().ok(),
                 // It begins as the resting dot and grows into the orb.
                 motion: Motion::new(0.12),
                 last: Instant::now(),
                 frame: None,
                 takes_before: 0,
+                models_only,
             })
         },
     )
@@ -311,6 +323,12 @@ impl Render for Onboarding {
                 Some("Begin"),
                 None,
             ),
+            Step::Model if self.models_only => (
+                "New voice models".into(),
+                "Pick one, or keep yours. Change it any time in Settings.".into(),
+                Some("Done"),
+                None,
+            ),
             Step::Model => (
                 "Pick a voice model".into(),
                 "Runs on this Mac. Change it any time.".into(),
@@ -386,6 +404,7 @@ impl Render for Onboarding {
         let failed_now = failed;
         let act = cx.listener(move |this, _, window, cx| {
             match step {
+                Step::Model if this.models_only => window.remove_window(),
                 Step::Welcome | Step::Model => this.advance(),
                 Step::Microphone => match mic_now {
                     Mic::Allowed => this.advance(),

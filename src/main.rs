@@ -305,6 +305,13 @@ fn main() {
     let settings = store::load_settings();
     // First run: the welcome window explains, then asks; `--onboarding` shows it again.
     let welcome = !settings.onboarded || args.iter().any(|a| a == "--onboarding");
+    // Set up before there was a model choice: offer the new models once.
+    let new_models = !welcome && settings.model.is_none();
+    // Write the model down now, so the default a first run starts with is still the
+    // model on the next launch (once onboarded, an unsaved choice reads as Parakeet).
+    if settings.model.is_none() {
+        model::Choice::saved().save();
+    }
 
     {
         // Watch the keyboard. Without Accessibility, ask once, then retry until it's granted.
@@ -388,6 +395,8 @@ fn main() {
         if welcome {
             onboarding::open(cx, state.clone(), tx.clone());
             store::save_settings(&store::Settings { onboarded: true, ..store::load_settings() });
+        } else if new_models {
+            onboarding::open_models(cx, state.clone(), tx.clone());
         } else {
             ui::open_main(cx, state.clone(), tx.clone());
         }
@@ -497,8 +506,11 @@ fn main() {
                         Some(tray::Action::Quit) => cx.quit(),
                         None => {}
                     }
+                    // The main window redraws itself when its contents change.
                     if frame.is_multiple_of(2) {
-                        cx.refresh_windows();
+                        for w in cx.windows().into_iter().filter(|w| w.downcast::<ui::Main>().is_none()) {
+                            let _ = w.update(cx, |_, window, _| window.refresh());
+                        }
                     }
                 });
                 if ok.is_err() {
