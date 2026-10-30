@@ -660,8 +660,11 @@ impl Main {
                 blur_radius: px(32.),
                 spread_radius: px(0.),
             }])
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.menu = None;
+            // A pick closes it, except the theme menu: it stays to try each look.
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if id != "look" {
+                    this.menu = None;
+                }
                 cx.notify();
             }))
             .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
