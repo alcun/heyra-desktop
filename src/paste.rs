@@ -37,21 +37,33 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-/// Nothing on screen has keyboard focus, so a paste would go nowhere. Only a clear
-/// "no focused element" counts: an app that answers badly is given the paste.
+/// A paste would go nowhere: Finder is in front (the desktop or a file list) and no
+/// text field in it has focus. Other apps get the paste: many (Chrome, Electron) don't
+/// tell Accessibility what has focus, so silence from them means nothing.
 pub fn nowhere_to_type() -> bool {
     use core_foundation::base::{CFRelease, TCFType};
-    const NO_VALUE: i32 = -25212; // kAXErrorNoValue
-    let attribute = core_foundation::string::CFString::from_static_string("AXFocusedUIElement");
+    use core_foundation::string::CFString;
+    if frontmost_bundle().as_deref() != Some("com.apple.finder") {
+        return false;
+    }
     unsafe {
         let system = AXUIElementCreateSystemWide();
         let mut focused: core_foundation::base::CFTypeRef = std::ptr::null();
-        let error = AXUIElementCopyAttributeValue(system, attribute.as_concrete_TypeRef(), &mut focused);
-        if !focused.is_null() {
-            CFRelease(focused);
-        }
+        let attribute = CFString::from_static_string("AXFocusedUIElement");
+        AXUIElementCopyAttributeValue(system, attribute.as_concrete_TypeRef(), &mut focused);
         CFRelease(system);
-        error == NO_VALUE
+        if focused.is_null() {
+            return true;
+        }
+        let mut role: core_foundation::base::CFTypeRef = std::ptr::null();
+        let attribute = CFString::from_static_string("AXRole");
+        AXUIElementCopyAttributeValue(focused, attribute.as_concrete_TypeRef(), &mut role);
+        CFRelease(focused);
+        if role.is_null() {
+            return true;
+        }
+        let role = CFString::wrap_under_create_rule(role as _).to_string();
+        !["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"].contains(&role.as_str())
     }
 }
 
@@ -99,20 +111,24 @@ const TERMINALS: [&str; 9] = [
 
 /// Is the app the text is about to go into a terminal?
 pub fn in_terminal() -> bool {
+    frontmost_bundle().is_some_and(|name| TERMINALS.contains(&name.as_str()))
+}
+
+/// The bundle id of the app in front.
+fn frontmost_bundle() -> Option<String> {
     use cocoa::base::{id, nil};
     use objc::{class, msg_send, sel, sel_impl};
     unsafe {
         let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
         let app: id = msg_send![workspace, frontmostApplication];
         if app == nil {
-            return false;
+            return None;
         }
         let bundle: id = msg_send![app, bundleIdentifier];
         if bundle == nil {
-            return false;
+            return None;
         }
         let utf8: *const std::ffi::c_char = msg_send![bundle, UTF8String];
-        let name = std::ffi::CStr::from_ptr(utf8).to_string_lossy();
-        TERMINALS.contains(&name.as_ref())
+        Some(std::ffi::CStr::from_ptr(utf8).to_string_lossy().into_owned())
     }
 }
