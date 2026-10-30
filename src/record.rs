@@ -107,6 +107,16 @@ impl Recorder {
         self.shared.buffer.lock().unwrap().len() as f32 / self.sample_rate as f32
     }
 
+    /// Samples in the take so far.
+    pub fn len(&self) -> usize {
+        self.shared.buffer.lock().unwrap().len()
+    }
+
+    /// A copy of the take from `from` on, without stopping it.
+    pub fn peek(&self, from: usize) -> Vec<f32> {
+        self.shared.buffer.lock().unwrap().get(from..).map(<[f32]>::to_vec).unwrap_or_default()
+    }
+
     /// TING squeezes and button presses heard since the last call.
     pub fn ting_events(&self) -> Vec<crate::ting::Event> {
         std::mem::take(&mut *self.shared.ting_events.lock().unwrap())

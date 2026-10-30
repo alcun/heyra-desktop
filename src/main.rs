@@ -30,6 +30,49 @@ use engine::Transducer;
 use worker::{Cmd, Phase};
 
 /// `heyra --file clip.wav` prints a transcript: a quick check of the engine.
+/// `heyra --live take.wav`: the take played in at real speed, transcribed as it would be
+/// while talking. Prints the wait after the end and the text, then the one-pass text.
+fn transcribe_live(path: &str) {
+    let mut reader = hound::WavReader::open(path).expect("open wav");
+    let spec = reader.spec();
+    assert_eq!(spec.channels, 1, "mono wav");
+    let samples: Vec<f32> = match spec.sample_format {
+        hound::SampleFormat::Float => reader.samples::<f32>().map(|s| s.unwrap()).collect(),
+        hound::SampleFormat::Int => {
+            let scale = (1i64 << (spec.bits_per_sample - 1)) as f32;
+            reader.samples::<i32>().map(|s| s.unwrap() as f32 / scale).collect()
+        }
+    };
+    let dir = model::find(&model::Choice::saved()).expect("no model yet: open Heyra once to download it");
+    let engine: engine::Shared = std::sync::Arc::new(std::sync::Mutex::new(Box::new(Transducer::load(&dir).expect("load model"))));
+    let rate = spec.sample_rate;
+    let step = (rate as f32 * 0.03) as usize;
+    let mut ahead = engine::Ahead::new(engine.clone(), rate);
+    let mut len = 0;
+    eprintln!("start");
+    while len < samples.len() {
+        std::thread::sleep(Duration::from_millis(30));
+        len = (len + step).min(samples.len());
+        let before = ahead.cut();
+        ahead.feed(len, |from| samples[from.min(len)..len].to_vec());
+        if ahead.cut() != before {
+            eprintln!("cut {:.2}", ahead.cut() as f32 / rate as f32);
+        }
+        for text in ahead.written() {
+            eprintln!("piece {}", serde_json::to_string(&text).unwrap_or_default());
+        }
+    }
+    let started = Instant::now();
+    let live = ahead.finish(&samples);
+    eprintln!("final {}", serde_json::to_string(&live).unwrap_or_default());
+    eprintln!("{:.1}s take, {:.2}s after the end", samples.len() as f32 / rate as f32, started.elapsed().as_secs_f32());
+    println!("live:     {live}");
+    let started = Instant::now();
+    let whole = engine::transcribe_long(engine.lock().unwrap().as_mut(), rate, &samples);
+    eprintln!("one pass: {:.2}s", started.elapsed().as_secs_f32());
+    println!("one pass: {whole}");
+}
+
 fn transcribe_file(path: &str) {
     let mut reader = hound::WavReader::open(path).expect("open wav");
     let spec = reader.spec();
@@ -170,6 +213,9 @@ fn main() {
     }
     if args.len() == 3 && args[1] == "--file" {
         return transcribe_file(&args[2]);
+    }
+    if args.len() == 3 && args[1] == "--live" {
+        return transcribe_live(&args[2]);
     }
     // Load a model folder and transcribe a second of silence: run as a separate process
     // by `model::check_folder`, so a model the engine can't run can't take Heyra down.
@@ -506,9 +552,11 @@ fn main() {
                         Some(tray::Action::Quit) => cx.quit(),
                         None => {}
                     }
-                    // The main window redraws itself when its contents change.
+                    // Only the welcome window's orb needs a steady frame. The main window
+                    // redraws itself on change; toasts animate themselves; the dot's
+                    // target and the orb's buttons are still.
                     if frame.is_multiple_of(2) {
-                        for w in cx.windows().into_iter().filter(|w| w.downcast::<ui::Main>().is_none()) {
+                        for w in cx.windows().into_iter().filter_map(|w| w.downcast::<onboarding::Onboarding>()) {
                             let _ = w.update(cx, |_, window, _| window.refresh());
                         }
                     }

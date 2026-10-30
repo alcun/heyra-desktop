@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::engine::{Engine, Transducer};
+use crate::engine::{Ahead, Engine, Transducer};
 use crate::model::Choice;
 use crate::hotkey::Key;
 use crate::record::Recorder;
@@ -239,7 +239,7 @@ impl Mute {
 }
 
 /// Stop recording, transcribe the take and keep it in History; paste it unless `paste` is off.
-fn finish(state: &Shared, engine: &mut dyn Engine, recorder: &Recorder, paste: bool, mute: &mut Mute) {
+fn finish(state: &Shared, engine: &crate::engine::Shared, ahead: Option<Ahead>, recorder: &Recorder, paste: bool, mute: &mut Mute) {
     let samples = recorder.end();
     let secs = samples.len() as f32 / recorder.sample_rate as f32;
     let peak = samples.iter().fold(0f32, |m, x| m.max(x.abs()));
@@ -259,7 +259,8 @@ fn finish(state: &Shared, engine: &mut dyn Engine, recorder: &Recorder, paste: b
         s.level = 0.0;
     }
     let started = Instant::now();
-    let raw = crate::engine::transcribe_long(engine, recorder.sample_rate, &samples);
+    let ahead = ahead.unwrap_or_else(|| Ahead::new(engine.clone(), recorder.sample_rate));
+    let raw = ahead.finish(&samples);
     let text = store::apply_dictionary(&raw, &store::load_dictionary());
     if store::is_scratch_that(&text) {
         store::log("scratch that");
@@ -309,7 +310,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
     let mut loader = Some(Loader::start(&state, state.lock().unwrap().model.clone()));
     let mut queue: Vec<Cmd> = Vec::new();
     let mut recorder: Option<Recorder> = None;
-    let mut engine = loop {
+    let engine = loop {
         while let Ok(cmd) = cmds.try_recv() {
             match cmd {
                 Cmd::UseModel(choice) if loader.as_ref().is_none_or(|l| l.choice != choice) => {
@@ -355,6 +356,9 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
         std::thread::sleep(Duration::from_millis(30));
     };
     let mut recorder = recorder.unwrap();
+    let engine: crate::engine::Shared = Arc::new(Mutex::new(engine));
+    // The take being transcribed as it's recorded.
+    let mut ahead: Option<Ahead> = None;
     state.lock().unwrap().model_error = None;
     // A model downloading to take over, while the current one keeps working.
     let mut switch: Option<Loader> = None;
@@ -430,11 +434,14 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
         // The level shows in Settings too, so a mic can be checked without talking to an app.
         state.lock().unwrap().level = recorder.level();
         if recording {
+            ahead
+                .get_or_insert_with(|| Ahead::new(engine.clone(), recorder.sample_rate))
+                .feed(recorder.len(), |from| recorder.peek(from));
             if recorder.seconds() > MAX_TAKE_SECS {
                 recording = false;
                 ignore_up = !hands_free;
                 hands_free = false;
-                finish(&state, engine.as_mut(), &recorder, true, &mut mute);
+                finish(&state, &engine, ahead.take(), &recorder, true, &mut mute);
                 ready(&state);
                 continue;
             }
@@ -458,20 +465,21 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
             cmd @ (Cmd::Discard | Cmd::Finish) if hands_free => {
                 recording = false;
                 hands_free = false;
-                finish(&state, engine.as_mut(), &recorder, matches!(cmd, Cmd::Finish), &mut mute);
+                finish(&state, &engine, ahead.take(), &recorder, matches!(cmd, Cmd::Finish), &mut mute);
                 ready(&state);
             }
             Cmd::Key(Key::Down) if hands_free => {
                 recording = false;
                 hands_free = false;
                 ignore_up = true;
-                finish(&state, engine.as_mut(), &recorder, true, &mut mute);
+                finish(&state, &engine, ahead.take(), &recorder, true, &mut mute);
                 ready(&state);
             }
             Cmd::Key(Key::Down) if !recording => {
                 recorder.set_live(true);
                 recording = true;
                 pressed_at = Instant::now();
+                ahead = None;
                 recorder.begin();
                 // The second tap of a double-tap already heard the first's sound.
                 if !last_tap.is_some_and(|t| t.elapsed() < DOUBLE_TAP) {
@@ -498,7 +506,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                     continue;
                 }
                 recording = false;
-                finish(&state, engine.as_mut(), &recorder, true, &mut mute);
+                finish(&state, &engine, ahead.take(), &recorder, true, &mut mute);
                 ready(&state);
             }
             Cmd::UseModel(choice) => {
@@ -551,7 +559,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
             s.retry = None;
             match result {
                 Ok(new) => {
-                    engine = new;
+                    *engine.lock().unwrap_or_else(|e| e.into_inner()) = new;
                     choice.save();
                     s.toast = Some(("Using".into(), choice.name(), Instant::now()));
                     s.model = choice;
