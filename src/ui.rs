@@ -128,6 +128,38 @@ fn mark(height: f32) -> Div {
         .child(bar(height, p().ink))
 }
 
+/// A tooltip: a solid pill in the opposite of the page's colours, so it reads on anything.
+pub struct Tip(SharedString);
+
+impl Render for Tip {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div().pl(px(6.)).pt(px(6.)).child(
+            div()
+                .px(px(9.))
+                .py(px(5.))
+                .rounded(px(6.))
+                .bg(rgb(p().ink))
+                .shadow(vec![gpui::BoxShadow {
+                    color: alpha(0x000000, 0.28),
+                    offset: point(px(0.), px(3.)),
+                    blur_radius: px(10.),
+                    spread_radius: px(0.),
+                }])
+                .font_family(MONO)
+                .text_size(px(11.))
+                .text_color(rgb(p().ground))
+                .whitespace_nowrap()
+                .child(self.0.clone()),
+        )
+    }
+}
+
+/// A tooltip builder for `.tooltip(...)`.
+fn tip(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView + 'static {
+    let text: SharedString = text.into();
+    move |_, cx| cx.new(|_| Tip(text.clone())).into()
+}
+
 /// Small uppercase mono label, the faceplate's lettering.
 fn label(text: impl Into<SharedString>) -> Div {
     div().font_family(MONO).text_size(px(10.5)).text_color(rgb(p().slate)).child(text.into())
@@ -545,6 +577,7 @@ impl Main {
                 this.copied = None;
                 cx.notify();
             }))
+            .when(shown < 0.5, |d| d.tooltip(tip(text)))
             .child(gpui::svg().path(icon).size(px(17.)).flex_none().text_color(rgb(if active { p().gold } else { color })))
             .child(div().whitespace_nowrap().opacity(shown).child(text))
     }
@@ -584,6 +617,17 @@ impl Main {
             day = day.pred_opt().unwrap_or(day);
             if streak > 3650 {
                 break;
+            }
+        }
+        // Words a day for the last fortnight, today last.
+        let today_date = Local::now().date_naive();
+        let mut daily = [0usize; 14];
+        for e in &s.history {
+            if let Some(d) = Local.timestamp_opt(e.at as i64, 0).single().map(|t| t.date_naive()) {
+                let ago = (today_date - d).num_days();
+                if (0..14).contains(&ago) {
+                    daily[13 - ago as usize] += e.words();
+                }
             }
         }
         let timed: Vec<f32> = s.history.iter().filter(|e| e.took > 0.0).map(|e| e.took).collect();
@@ -655,31 +699,85 @@ impl Main {
                     ))),
             );
 
-        let cell = |name: &'static str, value: String, note: String| {
+        let card = || div().flex().flex_col().p_7().rounded(px(14.)).border_1().border_color(rgb(p().hair));
+        let big = |text: String| readout(text).text_size(px(30.)).line_height(px(36.));
+        // Words: today big, a fortnight of bars, today's in gold. Each bar says its day.
+        let most = daily.iter().copied().max().unwrap_or(0).max(1) as f32;
+        let bars = div().flex().items_end().gap(px(6.)).h(px(110.)).children(daily.iter().enumerate().map(|(i, &n)| {
+            let date = today_date - chrono::Duration::days(13 - i as i64);
+            let height = if n == 0 { 3. } else { (n as f32 / most * 104.).max(6.) };
+            let color: Hsla = if i == 13 { rgb(p().gold).into() } else { alpha(p().ink, 0.16) };
             div()
+                .id(("day", i))
                 .flex_1()
-                .min_w_0()
+                .h_full()
                 .flex()
-                .flex_col()
-                .gap_2()
-                .px_6()
-                .py_6()
-                .child(label(name))
-                .child(readout(value).text_size(px(22.)))
-                .child(div().text_size(px(12.)).text_color(rgb(p().dim)).child(note))
+                .items_end()
+                .tooltip(tip(format!("{} · {} words", date.format("%a %-d %b"), grouped(n))))
+                .child(div().w_full().h(px(height)).rounded_t(px(4.)).bg(color))
+        }));
+        let words_card = card()
+            .gap_6()
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .items_end()
+                    .child(div().flex().flex_col().gap_2().child(label("TODAY")).child(big(format!("{} words", grouped(today)))))
+                    .child(label(format!("{} ALL TIME", grouped(words))).text_color(rgb(p().dim))),
+            )
+            .child(bars);
+        // Streak: the last seven days, lit where you dictated.
+        let week = div().flex().gap(px(7.)).children((7..14).map(|i| {
+            let date = today_date - chrono::Duration::days(13 - i as i64);
+            let lit = daily[i] > 0;
+            div()
+                .id(("week", i))
+                .size(px(12.))
+                .rounded_full()
+                .when(lit, |d| d.bg(rgb(p().gold)))
+                .when(!lit, |d| d.border_1().border_color(rgb(p().hair)))
+                .tooltip(tip(date.format("%a %-d %b").to_string()))
+        }));
+        // Pace against typing: two bars on one scale.
+        let fastest = pace.max(40).max(1) as f32;
+        let pace_bar = |name: &'static str, wpm: usize, color: Hsla| {
+            div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(label(name).w(px(52.)))
+                .child(div().flex_1().h(px(6.)).child(div().h_full().w(gpui::relative(wpm as f32 / fastest)).rounded_full().bg(color)))
         };
-        let strip = div()
+        let small = div()
             .flex()
-            .border_1()
-            .border_color(rgb(p().hair))
-            .rounded(px(14.))
-            .child(cell("TODAY", format!("{} w", grouped(today)), format!("{} all time", grouped(words))))
-            .child(div().w(px(1.)).bg(rgb(p().hair)))
-            .child(cell("TIME SAVED", saved, "vs typing".into()))
-            .child(div().w(px(1.)).bg(rgb(p().hair)))
-            .child(cell("STREAK", format!("{streak} {}", if streak == 1 { "day" } else { "days" }), String::new()))
-            .child(div().w(px(1.)).bg(rgb(p().hair)))
-            .child(cell("PACE", format!("{pace} wpm"), String::new()));
+            .gap_4()
+            .child(card().flex_1().gap_2().child(label("TIME SAVED")).child(big(saved)))
+            .child(
+                card()
+                    .flex_1()
+                    .gap_2()
+                    .child(label("STREAK"))
+                    .child(big(format!("{streak} {}", if streak == 1 { "day" } else { "days" })))
+                    .child(div().pt_2().child(week)),
+            )
+            .child(
+                card()
+                    .flex_1()
+                    .gap_2()
+                    .child(label("PACE"))
+                    .child(big(format!("{pace} wpm")))
+                    .child(
+                        div()
+                            .pt_2()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(pace_bar("YOU", pace, rgb(p().gold).into()))
+                            .child(pace_bar("TYPING", 40, alpha(p().ink, 0.16))),
+                    ),
+            );
+        let strip = div().flex().flex_col().gap_4().child(words_card).child(small);
 
         // First-run setup: each step ticks itself off as macOS reports it done.
         let step = |id: &'static str, done: bool, name: &'static str, detail: String, action: Option<(&'static str, &'static str)>| {
@@ -1297,6 +1395,7 @@ impl Render for Main {
                 store::save_settings(&store::Settings { sidebar_narrow: !this.rail_open, ..store::load_settings() });
                 cx.notify();
             }))
+            .tooltip(tip(if self.rail_open { "Hide sidebar" } else { "Show sidebar" }))
             .child(gpui::svg().path("icons/sidebar.svg").size(px(17.)).text_color(rgb(p().slate)));
         // A top bar for the traffic lights and the sidebar toggle; under it the sidebar,
         // and the page as a panel set into the window.
