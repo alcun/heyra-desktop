@@ -368,10 +368,12 @@ impl gpui::AssetSource for Icons {
 }
 
 /// One take: number and time, your words, duration. A click copies it.
-fn take(index: usize, entry: &store::Entry, copied: bool, main: gpui::WeakEntity<Main>) -> AnyElement {
+/// `full`: every word (History); otherwise three lines at most (Home).
+fn take(index: usize, entry: &store::Entry, copied: bool, full: bool, main: gpui::WeakEntity<Main>) -> AnyElement {
     let text = entry.text.clone();
     div()
         .id(("take", index))
+        .w_full()
         .flex()
         .gap_6()
         .py_4()
@@ -389,30 +391,31 @@ fn take(index: usize, entry: &store::Entry, copied: bool, main: gpui::WeakEntity
         })
         .child(
             div()
-                .flex_none()
-                .w(px(64.))
-                .flex()
-                .flex_col()
-                .gap(px(2.))
-                .child(label(clock(entry.at))),
-        )
-        .child(
-            div()
                 .flex_1()
                 .min_w_0()
                 .font_family(SANS)
                 .text_size(px(15.))
                 .line_height(px(23.))
                 .text_color(rgb(p().ink))
-                .line_clamp(3)
+                .when(!full, |d| d.line_clamp(3))
                 .child(entry.text.clone()),
         )
+        // When, and how long, on the right.
         .child(
-            div().flex_none().w(px(64.)).flex().justify_end().child(if copied {
-                label("COPIED").text_color(rgb(p().gold))
-            } else {
-                label(format!("{:.1} s", entry.secs))
-            }),
+            div()
+                .flex_none()
+                .w(px(72.))
+                .pt(px(3.))
+                .flex()
+                .flex_col()
+                .items_end()
+                .gap(px(4.))
+                .child(label(clock(entry.at)))
+                .child(if copied {
+                    label("COPIED").text_color(rgb(p().gold))
+                } else {
+                    label(format!("{:.1} s", entry.secs)).text_color(rgb(p().dim))
+                }),
         )
         .into_any_element()
 }
@@ -935,7 +938,7 @@ impl Main {
         let me = cx.entity().downgrade();
         let recent: Vec<AnyElement> = {
             let s = self.state.lock().unwrap();
-            (0..count).rev().take(6).map(|i| take(i, &s.history[i], self.copied == Some(i), me.clone())).collect()
+            (0..count).rev().take(6).map(|i| take(i, &s.history[i], self.copied == Some(i), false, me.clone())).collect()
         };
         div()
             .flex()
@@ -989,11 +992,13 @@ impl Main {
                             let s = state.lock().unwrap();
                             let i = s.history.len().saturating_sub(n + 1);
                             let Some(entry) = s.history.get(i) else { return div().into_any_element() };
+                            // List items don't stretch by themselves: full width, so times line up.
                             div()
+                                .w_full()
                                 .flex()
                                 .flex_col()
                                 .when(n > 0, |d| d.child(div().h(px(1.)).ml(px(18.)).bg(rgb(p().hair))))
-                                .child(take(i, entry, copied == Some(i), me.clone()))
+                                .child(take(i, entry, copied == Some(i), true, me.clone()))
                                 .into_any_element()
                         })
                         .size_full(),
