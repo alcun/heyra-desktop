@@ -2262,6 +2262,32 @@ fn click_through(window: &Window) {
     }
 }
 
+/// Make `window` (a GPUI panel) refuse key and main status: swap its class for a
+/// subclass, made once, whose canBecomeKeyWindow and canBecomeMainWindow say no. Clicks
+/// still arrive: GPUI takes the first click on a window that isn't key.
+#[allow(unexpected_cfgs)]
+unsafe fn never_key(window: *mut objc::runtime::Object) {
+    use objc::declare::ClassDecl;
+    use objc::runtime::{BOOL, Class, NO, Object, Sel, object_getClass};
+    use objc::{sel, sel_impl};
+    use std::sync::OnceLock;
+    extern "C" fn no(_: &Object, _: Sel) -> BOOL {
+        NO
+    }
+    unsafe extern "C" {
+        fn object_setClass(obj: *mut Object, cls: *const Class) -> *const Class;
+    }
+    static CLASS: OnceLock<usize> = OnceLock::new();
+    let class = *CLASS.get_or_init(|| unsafe {
+        let superclass = &*object_getClass(window);
+        let mut decl = ClassDecl::new("HeyraFloatingPanel", superclass).expect("class name free");
+        decl.add_method(sel!(canBecomeKeyWindow), no as extern "C" fn(&Object, Sel) -> BOOL);
+        decl.add_method(sel!(canBecomeMainWindow), no as extern "C" fn(&Object, Sel) -> BOOL);
+        decl.register() as *const Class as usize
+    });
+    unsafe { object_setClass(window, class as *const Class) };
+}
+
 /// macOS draws a shadow around even a clear window, and a titled window's top edge;
 /// the floating pieces must have neither.
 #[allow(unexpected_cfgs)]
@@ -2280,6 +2306,9 @@ fn no_shadow(window: &Window) {
             // still a non-activating panel) has none.
             const NONACTIVATING_PANEL: u64 = 1 << 7;
             let _: () = msg_send![native, setStyleMask: NONACTIVATING_PANEL];
+            // Never the key window: a click on the dot, a card or the words' × mustn't take
+            // the keyboard from the app you're typing in, or ⌘V lands here and beeps.
+            never_key(native);
         }
     }
 }
