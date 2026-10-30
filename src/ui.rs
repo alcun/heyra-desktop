@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{Local, TimeZone};
 use gpui::{
-    AnyElement, App, Bounds, Context, Div, FontWeight, Hsla, SharedString, Stateful, Window,
+    AnyElement, App, Bounds, Context, Div, ElementId, FontWeight, Hsla, SharedString, Stateful, Window,
     WindowBounds, WindowOptions, div, point,
     prelude::*, px, rgb, size,
 };
@@ -129,35 +129,60 @@ fn mark(height: f32) -> Div {
 }
 
 /// A tooltip: a solid pill in the opposite of the page's colours, so it reads on anything.
-pub struct Tip(SharedString);
-
-impl Render for Tip {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().pl(px(6.)).pt(px(6.)).child(
-            div()
-                .px(px(9.))
-                .py(px(5.))
-                .rounded(px(6.))
-                .bg(rgb(p().ink))
-                .shadow(vec![gpui::BoxShadow {
-                    color: alpha(0x000000, 0.28),
-                    offset: point(px(0.), px(3.)),
-                    blur_radius: px(10.),
-                    spread_radius: px(0.),
-                }])
-                .font_family(MONO)
-                .text_size(px(11.))
-                .text_color(rgb(p().ground))
-                .whitespace_nowrap()
-                .child(self.0.clone()),
-        )
-    }
+fn tip_pill(text: SharedString) -> impl IntoElement {
+    let pill = div()
+        .px(px(9.))
+        .py(px(5.))
+        .rounded(px(6.))
+        .bg(rgb(p().ink))
+        .shadow(vec![gpui::BoxShadow {
+            color: alpha(0x000000, 0.28),
+            offset: point(px(0.), px(3.)),
+            blur_radius: px(10.),
+            spread_radius: px(0.),
+        }])
+        .font_family(MONO)
+        .text_size(px(11.))
+        .line_height(px(14.))
+        .text_color(rgb(p().ground))
+        .whitespace_nowrap()
+        .child(text.clone());
+    gpui::AnimationExt::with_animation(
+        pill,
+        ElementId::Name(text),
+        gpui::Animation::new(Duration::from_millis(110)).with_easing(gpui::ease_out_quint()),
+        |pill, t| pill.opacity(t),
+    )
 }
 
-/// A tooltip builder for `.tooltip(...)`.
-fn tip(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView + 'static {
-    let text: SharedString = text.into();
-    move |_, cx| cx.new(|_| Tip(text.clone())).into()
+/// "DICTIONARY" as "Dictionary".
+fn title_case(text: &str) -> String {
+    let lower = text.to_lowercase();
+    let mut chars = lower.chars();
+    chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
+}
+
+/// Where a tooltip sits against what it describes.
+#[derive(Clone, Copy)]
+enum Side {
+    Right,
+    Above,
+}
+
+/// The tooltip as an overlay on the top layer, so no edge clips it: directly right of
+/// its target, centred on it, or centred above it.
+fn tip_overlay(text: SharedString, side: Side) -> Div {
+    // A pill is 24 tall; its width, near enough, for centring above.
+    let width = text.chars().count() as f32 * 7.4 + 18.;
+    let pill = gpui::deferred(gpui::anchored().child(match side {
+        Side::Right => div().ml(px(10.)).mt(px(-7.)).child(tip_pill(text)),
+        Side::Above => div().ml(px(-width / 2.)).mt(px(-32.)).child(tip_pill(text)),
+    }))
+    .with_priority(1);
+    match side {
+        Side::Right => div().absolute().left_full().top_0().h_full().flex().items_center().child(pill),
+        Side::Above => div().absolute().bottom_full().left_0().w_full().flex().justify_center().child(pill),
+    }
 }
 
 /// Small uppercase mono label, the faceplate's lettering.
@@ -391,6 +416,8 @@ pub struct Main {
     /// The sidebar shows labels (or just icons), and since when, for the slide.
     rail_open: bool,
     rail_since: Instant,
+    /// What the pointer is on, for its tooltip.
+    hovered: Option<SharedString>,
     /// The width the latest slide started from.
     rail_from: f32,
     /// History, newest first: only the rows on screen are laid out.
@@ -470,6 +497,8 @@ pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
                     rail_open: !store::load_settings().sidebar_narrow,
                     rail_since: Instant::now() - Duration::from_secs(2),
                     rail_from: RAIL_WIDE,
+                    // HEYRA_TIP=nav-dict (any tooltip's key) shows it as if hovered: for screenshots.
+                    hovered: std::env::var("HEYRA_TIP").ok().map(Into::into),
                     takes: gpui::ListState::new(0, gpui::ListAlignment::Top, px(600.)),
                 }
             })
@@ -493,6 +522,22 @@ impl Main {
         let wd = w * (1.0 - DAMPING * DAMPING).sqrt();
         let progress = 1.0 - (-DAMPING * w * t).exp() * ((wd * t).cos() + DAMPING * w / wd * (wd * t).sin());
         (self.rail_from + (to - self.rail_from) * progress, true)
+    }
+
+    /// Give `el` a tooltip that shows the moment it's hovered.
+    fn with_tip(&self, el: Stateful<Div>, key: impl Into<SharedString>, text: impl Into<SharedString>, side: Side, cx: &Context<Self>) -> Stateful<Div> {
+        let key: SharedString = key.into();
+        let on = self.hovered.as_ref() == Some(&key);
+        el.relative()
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                if *hovered {
+                    this.hovered = Some(key.clone());
+                } else if this.hovered.as_ref() == Some(&key) {
+                    this.hovered = None;
+                }
+                cx.notify();
+            }))
+            .when(on, |d| d.child(tip_overlay(text.into(), side)))
     }
 
     /// Each frame: redraw only if something shown has changed.
@@ -557,8 +602,9 @@ impl Main {
     fn nav(&self, id: &'static str, icon: &'static str, text: &'static str, page: Page, shown: f32, cx: &mut Context<Self>) -> impl IntoElement {
         let active = self.page == page;
         let color = if active { p().ink } else { p().slate };
-        div()
-            .id(id)
+        let item = div().id(id);
+        let item = if shown < 0.5 { self.with_tip(item, id, title_case(text), Side::Right, cx) } else { item };
+        item
             .flex()
             .items_center()
             .gap_3()
@@ -577,7 +623,6 @@ impl Main {
                 this.copied = None;
                 cx.notify();
             }))
-            .when(shown < 0.5, |d| d.tooltip(tip(text)))
             .child(gpui::svg().path(icon).size(px(17.)).flex_none().text_color(rgb(if active { p().gold } else { color })))
             .child(div().whitespace_nowrap().opacity(shown).child(text))
     }
@@ -707,13 +752,8 @@ impl Main {
             let date = today_date - chrono::Duration::days(13 - i as i64);
             let height = if n == 0 { 3. } else { (n as f32 / most * 104.).max(6.) };
             let color: Hsla = if i == 13 { rgb(p().gold).into() } else { alpha(p().ink, 0.16) };
-            div()
-                .id(("day", i))
-                .flex_1()
-                .h_full()
-                .flex()
-                .items_end()
-                .tooltip(tip(format!("{} · {} words", date.format("%a %-d %b"), grouped(n))))
+            let bar = div().id(("day", i)).flex_1().h_full().flex().items_end();
+            self.with_tip(bar, format!("day-{i}"), format!("{} · {} words", date.format("%a %-d %b"), grouped(n)), Side::Above, cx)
                 .child(div().w_full().h(px(height)).rounded_t(px(4.)).bg(color))
         }));
         let words_card = card()
@@ -731,13 +771,10 @@ impl Main {
         let week = div().flex().gap(px(7.)).children((7..14).map(|i| {
             let date = today_date - chrono::Duration::days(13 - i as i64);
             let lit = daily[i] > 0;
-            div()
-                .id(("week", i))
-                .size(px(12.))
-                .rounded_full()
+            let dot = div().id(("week", i)).size(px(12.)).rounded_full();
+            self.with_tip(dot, format!("week-{i}"), date.format("%a %-d %b").to_string(), Side::Above, cx)
                 .when(lit, |d| d.bg(rgb(p().gold)))
                 .when(!lit, |d| d.border_1().border_color(rgb(p().hair)))
-                .tooltip(tip(date.format("%a %-d %b").to_string()))
         }));
         // Pace against typing: two bars on one scale.
         let fastest = pace.max(40).max(1) as f32;
@@ -1378,8 +1415,8 @@ impl Render for Main {
                     }).opacity(shown)))
                     .child(label(short(&mic, 17)).text_color(rgb(p().dim)).whitespace_nowrap().opacity(shown)),
             );
-        let toggle = div()
-            .id("rail-toggle")
+        let toggle = self
+            .with_tip(div().id("rail-toggle"), "rail-toggle", if self.rail_open { "Hide sidebar" } else { "Show sidebar" }, Side::Right, cx)
             .size(px(26.))
             .rounded(px(6.))
             .flex()
@@ -1395,7 +1432,6 @@ impl Render for Main {
                 store::save_settings(&store::Settings { sidebar_narrow: !this.rail_open, ..store::load_settings() });
                 cx.notify();
             }))
-            .tooltip(tip(if self.rail_open { "Hide sidebar" } else { "Show sidebar" }))
             .child(gpui::svg().path("icons/sidebar.svg").size(px(17.)).text_color(rgb(p().slate)));
         // A top bar for the traffic lights and the sidebar toggle; under it the sidebar,
         // and the page as a panel set into the window.
