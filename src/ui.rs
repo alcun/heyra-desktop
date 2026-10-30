@@ -129,7 +129,7 @@ fn mark(height: f32) -> Div {
 }
 
 /// A tooltip: a solid pill in the opposite of the page's colours, so it reads on anything.
-fn tip_pill(text: SharedString) -> impl IntoElement {
+fn tip_pill(text: SharedString, side: Side) -> impl IntoElement {
     let pill = div()
         .px(px(9.))
         .py(px(5.))
@@ -147,11 +147,24 @@ fn tip_pill(text: SharedString) -> impl IntoElement {
         .text_color(rgb(p().ground))
         .whitespace_nowrap()
         .child(text.clone());
+    // In with a little spring: it slides the last few points from its target, passes
+    // its place a touch and settles (ease-out-back), fading in as it goes.
+    let back = |t: f32| {
+        let (c1, c3) = (1.9_f32, 2.9_f32);
+        1. + c3 * (t - 1.).powi(3) + c1 * (t - 1.).powi(2)
+    };
     gpui::AnimationExt::with_animation(
         pill,
         ElementId::Name(text),
-        gpui::Animation::new(Duration::from_millis(110)).with_easing(gpui::ease_out_quint()),
-        |pill, t| pill.opacity(t),
+        gpui::Animation::new(Duration::from_millis(240)).with_easing(back),
+        move |pill, t| {
+            let gap = 6. * (1. - t);
+            let pill = pill.opacity((t * 1.6).min(1.));
+            match side {
+                Side::Right => pill.ml(px(-gap)),
+                Side::Above => pill.mt(px(gap)),
+            }
+        },
     )
 }
 
@@ -175,8 +188,8 @@ fn tip_overlay(text: SharedString, side: Side) -> Div {
     // A pill is 24 tall; its width, near enough, for centring above.
     let width = text.chars().count() as f32 * 7.4 + 18.;
     let pill = gpui::deferred(gpui::anchored().child(match side {
-        Side::Right => div().ml(px(10.)).mt(px(-1.)).child(tip_pill(text)),
-        Side::Above => div().ml(px(-width / 2.)).mt(px(-32.)).child(tip_pill(text)),
+        Side::Right => div().ml(px(10.)).mt(px(-1.)).child(tip_pill(text, side)),
+        Side::Above => div().ml(px(-width / 2.)).mt(px(-32.)).child(tip_pill(text, side)),
     }))
     .with_priority(1);
     match side {
@@ -345,6 +358,9 @@ impl gpui::AssetSource for Icons {
             "icons/chevron.svg" => include_bytes!("../assets/icons/chevron.svg"),
             "icons/mic.svg" => include_bytes!("../assets/icons/mic.svg"),
             "icons/model.svg" => include_bytes!("../assets/icons/model.svg"),
+            "icons/sun.svg" => include_bytes!("../assets/icons/sun.svg"),
+            "icons/moon.svg" => include_bytes!("../assets/icons/moon.svg"),
+            "icons/auto.svg" => include_bytes!("../assets/icons/auto.svg"),
             _ => return Ok(None),
         };
         Ok(Some(std::borrow::Cow::Borrowed(bytes)))
@@ -434,6 +450,8 @@ pub struct Main {
     hovered: Option<SharedString>,
     /// The dropdown that's open, if any.
     menu: Option<&'static str>,
+    /// The menu last closed by a click outside it, and when.
+    menu_closed: Option<(&'static str, Instant)>,
     /// The orb in Home's card: its shader, motion, last frame, and when that was drawn.
     orb: Option<crate::gpu_orb::Gpu>,
     orb_motion: crate::gpu_orb::Motion,
@@ -542,7 +560,8 @@ pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
                     rail_from: RAIL_WIDE,
                     // HEYRA_TIP=nav-dict (any tooltip's key) shows it as if hovered: for screenshots.
                     hovered: std::env::var("HEYRA_TIP").ok().map(Into::into),
-                    menu: std::env::var("HEYRA_MENU").ok().and_then(|m| ["mic", "model", "home-mic", "home-model"].into_iter().find(|k| *k == m)),
+                    menu_closed: None,
+                    menu: std::env::var("HEYRA_MENU").ok().and_then(|m| ["mic", "model", "home-mic", "home-model", "look"].into_iter().find(|k| *k == m)),
                     orb: crate::gpu_orb::Gpu::new().ok(),
                     orb_motion: crate::gpu_orb::Motion::new(1.0),
                     orb_last: Instant::now(),
@@ -612,6 +631,14 @@ impl Main {
         Some(frame)
     }
 
+    /// Open or close a menu from its trigger. A click on the trigger of an open menu
+    /// first lands outside the menu, which closes it; that same click mustn't reopen it.
+    fn toggle_menu(&mut self, id: &'static str) {
+        let just_closed = self.menu_closed.is_some_and(|(m, at)| m == id && at.elapsed() < Duration::from_millis(400));
+        self.menu = if self.menu == Some(id) || just_closed { None } else { Some(id) };
+        self.menu_closed = None;
+    }
+
     /// A floating menu of `items` on the top layer, its `anchor` corner at the spot it's
     /// placed; it closes on a pick or a click elsewhere.
     fn menu_panel(&self, id: &'static str, items: Vec<AnyElement>, anchor: gpui::Corner, cx: &Context<Self>) -> impl IntoElement {
@@ -637,8 +664,10 @@ impl Main {
                 this.menu = None;
                 cx.notify();
             }))
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+            .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
+                // Remembered, so a click on this menu's own trigger leaves it closed.
                 this.menu = None;
+                this.menu_closed = Some((id, Instant::now()));
                 cx.notify();
             }))
             .children(items.into_iter().map(|item| div().rounded(px(8.)).overflow_hidden().child(item)));
@@ -670,7 +699,7 @@ impl Main {
             .cursor_pointer()
             .hover(|s| s.bg(alpha(CREAM, 0.10)).border_color(alpha(CREAM, 0.2)))
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.menu = if this.menu == Some(id) { None } else { Some(id) };
+                this.toggle_menu(id);
                 cx.notify();
             }))
             .child(gpui::svg().path(icon).size(px(14.)).text_color(alpha(GOLD, 0.9)))
@@ -689,7 +718,7 @@ impl Main {
             .cursor_pointer()
             .hover(|s| s.bg(alpha(p().ink, 0.035)))
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.menu = if this.menu == Some(id) { None } else { Some(id) };
+                this.toggle_menu(id);
                 cx.notify();
             }))
             .child(div().flex_1().text_size(px(15.)).text_color(rgb(p().ink)).child(name))
@@ -1650,7 +1679,55 @@ impl Render for Main {
             .child(gpui::svg().path("icons/sidebar.svg").size(px(17.)).text_color(rgb(p().slate)));
         // A top bar for the traffic lights and the sidebar toggle; under it the sidebar,
         // and the page as a panel set into the window.
-        let top = div().h(px(44.)).flex_none().flex().items_center().pl(px(84.)).child(toggle);
+        // Top right: the look, as a menu.
+        let now = APPEARANCE.load(Ordering::Relaxed);
+        let look_items: Vec<AnyElement> = [("look-dark", "icons/moon.svg", "Dark", 0u8), ("look-light", "icons/sun.svg", "Light", 1), ("look-auto", "icons/auto.svg", "Match the Mac", 2)]
+            .into_iter()
+            .map(|(id, icon, text, value)| {
+                row(id)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(alpha(p().ink, 0.05)))
+                    .on_click(move |_, _, _| {
+                        APPEARANCE.store(value, Ordering::Relaxed);
+                        let name = ["dark", "light", "auto"][value as usize];
+                        store::save_settings(&store::Settings { appearance: Some(name.into()), ..store::load_settings() });
+                    })
+                    .child(gpui::svg().path(icon).size(px(16.)).text_color(rgb(if now == value { p().gold } else { p().slate })))
+                    .child(div().flex_1().text_size(px(15.)).text_color(rgb(p().ink)).child(text))
+                    .when(now == value, |d| d.child(div().text_size(px(15.)).text_color(rgb(p().gold)).child("✓")))
+                    .into_any_element()
+            })
+            .collect();
+        let look_open = self.menu == Some("look");
+        let look_icon = ["icons/moon.svg", "icons/sun.svg", "icons/auto.svg"][now.min(2) as usize];
+        let look = div()
+            .id("look")
+            .relative()
+            .size(px(26.))
+            .rounded(px(6.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .when(look_open, |d| d.bg(alpha(p().ink, 0.08)))
+            .hover(|s| s.bg(alpha(p().ink, 0.06)))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.toggle_menu("look");
+                this.hovered = None;
+                cx.notify();
+            }))
+            .child(gpui::svg().path(look_icon).size(px(16.)).text_color(rgb(if look_open { p().gold } else { p().slate })))
+            .when(look_open, |d| d.child(div().absolute().top_full().right_0().child(self.menu_panel("look", look_items, gpui::Corner::TopRight, cx))));
+        let top = div()
+            .h(px(44.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_between()
+            .pl(px(84.))
+            .pr(px(14.))
+            .child(toggle)
+            .child(look);
         div()
             .flex()
             .flex_col()
