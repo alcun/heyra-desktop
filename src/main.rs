@@ -162,6 +162,9 @@ fn replaced_bundle() -> Option<std::path::PathBuf> {
     (version != env!("CARGO_PKG_VERSION")).then_some(app)
 }
 
+/// How long the pointer rests on the dot before "Dictate fn" shows.
+const HOVER_TIP_AFTER: Duration = Duration::from_millis(250);
+
 /// How long a take with nowhere to go is offered to copy.
 const HELD_FOR: Duration = Duration::from_secs(12);
 
@@ -506,6 +509,9 @@ fn main() {
         let pressed = [std::rc::Rc::new(std::cell::Cell::new(false)), std::rc::Rc::new(std::cell::Cell::new(false))];
         let mut button_windows: Vec<gpui::WindowHandle<ui::OrbButton>> = Vec::new();
         let mut toast: Option<(gpui::WindowHandle<ui::Toast>, Instant)> = None;
+        // Over the resting dot: since when, and the "Dictate fn" pill once it's been a moment.
+        let mut hover_since: Option<Instant> = None;
+        let mut hover_tip: Option<gpui::WindowHandle<ui::Toast>> = None;
         // The caption window: opened the first time it's needed, then kept, faded in and out.
         let mut caption: Option<(gpui::WindowHandle<ui::Caption>, String)> = None;
         let mut caption_shown = false;
@@ -532,6 +538,27 @@ fn main() {
                             (px_ - cx_).hypot(py - cy) < 14.0
                         });
                     orb.tick(phase, level, hovering);
+                    // Other apps put their own cursor back as the mouse moves: keep the hand.
+                    if hovering {
+                        ui::hand_cursor(true);
+                    }
+                    match (hovering, hover_since) {
+                        (true, None) => hover_since = Some(Instant::now()),
+                        (false, Some(_)) => {
+                            hover_since = None;
+                            ui::hand_cursor(false);
+                            if let Some(h) = hover_tip.take() {
+                                let _ = h.update(cx, |_, window, _| window.remove_window());
+                            }
+                        }
+                        (true, Some(since)) if hover_tip.is_none() && toast.is_none() && since.elapsed() > HOVER_TIP_AFTER => {
+                            if let Some(centre) = orb.centre() {
+                                let view = ui::Toast { lead: "Dictate".into(), text: String::new(), key: Some("fn") };
+                                hover_tip = ui::open_toast(cx, centre, 34., view);
+                            }
+                        }
+                        _ => {}
+                    }
                     match (&hotspot, resting, orb.centre()) {
                         (None, true, Some(centre)) => {
                             hotspot = ui::open_hotspot(cx, centre, ui::Hotspot { clicked: clicked.clone() });
@@ -566,7 +593,7 @@ fn main() {
                         if let (Some((lead, text, at)), Some(centre)) = (fresh, orb.centre()) {
                             // Just above the resting dot; above the whole orb while it's awake.
                             let above = if phase == Phase::Ready { 28. } else { 74. };
-                            let view = ui::Toast { lead: lead.clone(), text: text.clone() };
+                            let view = ui::Toast { lead: lead.clone(), text: text.clone(), key: None };
                             toast = ui::open_toast(cx, centre, above, view).map(|h| (h, *at));
                         }
                     }

@@ -2,11 +2,16 @@
 
 ## 0.5.1
 
+- A new look: a top bar, a sidebar that folds down to icons, more room and fewer words.
+  New type, with titles in the accent colour.
+- Light and dark: Settings → Appearance (Dark, Light or Match Mac).
+- Home shows today's words, time saved against typing, your streak and your pace.
+- Hover the dot: Dictate, with the fn key. The pointer turns to a hand over it.
 - After a `brew upgrade`, Heyra restarts into the new version by itself, between takes.
 - With nowhere to type (Finder in front, no text field), your words wait above the dot
-  with a Copy button instead of being pasted into nothing.
+  with a Copy button.
 - The words above the dot sit in two clean lines.
-- The version is at the foot of Settings.
+- A bigger window. The version is at the foot of Settings.
 
 ## 0.5.0
 

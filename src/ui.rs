@@ -1419,6 +1419,8 @@ impl Render for OrbButton {
 pub struct Toast {
     pub lead: String,
     pub text: String,
+    /// A key to show after the words, as a keycap ("fn").
+    pub key: Option<&'static str>,
 }
 
 const TOAST_HEIGHT: f32 = 30.;
@@ -1428,7 +1430,7 @@ const TOAST_MARGIN: f32 = 36.;
 /// `above`: how far above the dot's centre the pill sits.
 pub fn open_toast(cx: &mut App, centre: (f64, f64), above: f32, toast: Toast) -> Option<gpui::WindowHandle<Toast>> {
     // Generous for the sans at this size; the pill itself sizes to its words.
-    let chars = (toast.lead.chars().count() + toast.text.chars().count()) as f32;
+    let chars = (toast.lead.chars().count() + toast.text.chars().count() + toast.key.map_or(0, |k| k.len() + 4)) as f32;
     let width = chars * 7.4 + 70. + TOAST_MARGIN * 2.;
     let height = TOAST_HEIGHT + TOAST_MARGIN * 2.;
     let origin = point(px(centre.0 as f32 - width / 2.), px(centre.1 as f32 - above - height / 2.));
@@ -1497,7 +1499,20 @@ impl Render for Toast {
             .child(div().text_color(rgb(SLATE)).child(self.lead.clone()))
             .when(!self.text.is_empty(), |d| {
                 d.child(div().font_weight(gpui::FontWeight::MEDIUM).text_color(rgb(CREAM)).child(self.text.clone()))
-            });
+            })
+            .children(self.key.map(|key| {
+                div()
+                    .px(px(6.))
+                    .py(px(1.))
+                    .rounded(px(4.))
+                    .border_1()
+                    .border_color(alpha(CREAM, 0.25))
+                    .bg(alpha(CREAM, 0.06))
+                    .font_family(MONO)
+                    .text_size(px(11.))
+                    .text_color(rgb(CREAM))
+                    .child(key)
+            }));
         div()
             .size_full()
             .flex()
@@ -1709,6 +1724,29 @@ impl Render for Held {
             gpui::Animation::new(Duration::from_millis(320)).with_easing(gpui::ease_out_quint()),
             |card, t| card.opacity(t).mt(px(8. * (1. - t))),
         ))
+    }
+}
+
+/// Show the pointing hand (or the arrow again) while Heyra isn't the active app: the dot
+/// is hovered over other apps' windows, where macOS would otherwise keep their cursor.
+#[allow(unexpected_cfgs)]
+pub fn hand_cursor(on: bool) {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+    unsafe extern "C" {
+        fn _CGSDefaultConnection() -> i32;
+        fn CGSSetConnectionProperty(cid: i32, target: i32, key: core_foundation::string::CFStringRef, value: core_foundation::base::CFTypeRef) -> i32;
+    }
+    static ALLOWED: std::sync::Once = std::sync::Once::new();
+    ALLOWED.call_once(|| unsafe {
+        use core_foundation::base::TCFType;
+        let key = core_foundation::string::CFString::from_static_string("SetsCursorInBackground");
+        let cid = _CGSDefaultConnection();
+        CGSSetConnectionProperty(cid, cid, key.as_concrete_TypeRef(), core_foundation::boolean::CFBoolean::true_value().as_CFTypeRef());
+    });
+    unsafe {
+        let cursor: *mut Object = if on { msg_send![class!(NSCursor), pointingHandCursor] } else { msg_send![class!(NSCursor), arrowCursor] };
+        let _: () = msg_send![cursor, set];
     }
 }
 
