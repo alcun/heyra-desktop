@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.4
+
+- Labels in sentence case, in the interface's own face: no more spaced-out capitals
+  in the sidebar, settings, cards, buttons or the copy card.
+
 ## 0.5.3
 
 - Home's status is a window into space: the orb itself, drifting, alive when you talk,
