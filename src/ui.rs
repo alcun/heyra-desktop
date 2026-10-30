@@ -142,7 +142,7 @@ fn tracked(text: &str) -> String {
     let mut out = String::new();
     for (i, c) in text.chars().enumerate() {
         if i > 0 {
-            out.push('\u{2009}');
+            out.push_str("\u{2009}\u{200A}");
         }
         out.push(c);
     }
@@ -1238,7 +1238,7 @@ impl Render for Main {
                             .flex()
                             .items_center()
                             // The mark is the h: the name runs on from it.
-                            .gap(px(5.))
+                            .gap(px(15.))
                             .child(mark(18.))
                             .child(
                                 div()
