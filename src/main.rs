@@ -471,7 +471,8 @@ fn main() {
                 frame = frame.wrapping_add(1);
                 let (phase, level, hands_free, note, draft) = {
                     let s = state.lock().unwrap();
-                    let talking = matches!(s.phase, Phase::Listening | Phase::Transcribing);
+                    let talking = matches!(s.phase, Phase::Listening | Phase::Transcribing)
+                        || s.draft_until.is_some_and(|t| t > Instant::now());
                     (s.phase, s.level, s.hands_free, s.toast.clone(), if talking { s.draft.clone() } else { String::new() })
                 };
                 let ok = cx.update(|cx| {

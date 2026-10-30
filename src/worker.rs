@@ -58,8 +58,10 @@ pub struct State {
     pub model_error: Option<(Choice, String)>,
     /// A download stopped and tries again by itself: why, and when.
     pub retry: Option<(String, Instant)>,
-    /// The take's words so far, while talking and until they're pasted.
+    /// The take's words so far, while talking and until they're pasted; then the
+    /// finished text, shown until `draft_until`.
     pub draft: String,
+    pub draft_until: Option<Instant>,
 }
 
 pub type Shared = Arc<Mutex<State>>;
@@ -178,6 +180,7 @@ pub fn new_state() -> Shared {
         model_error: None,
         retry: None,
         draft: String::new(),
+        draft_until: None,
     }))
 }
 
@@ -202,6 +205,9 @@ fn open_mic(state: &Shared, name: Option<&str>) -> Option<Recorder> {
         }
     }
 }
+
+/// How long the finished text stays above the orb after it's pasted.
+const CAPTION_LINGERS: Duration = Duration::from_millis(1600);
 
 /// Longest single take; a stuck key or a forgotten hands-free take ends here.
 const MAX_TAKE_SECS: f32 = 30.0 * 60.0;
@@ -282,6 +288,12 @@ fn finish(state: &Shared, engine: &crate::engine::Shared, ahead: Option<Ahead>, 
     }
     let took = started.elapsed().as_secs_f32();
     store::log(&format!("transcribed in {took:.2}s, {} chars", text.len()));
+    // The words above the orb end on what was written, and stay a moment to be read.
+    if !text.is_empty() {
+        let mut s = state.lock().unwrap();
+        s.draft = text.clone();
+        s.draft_until = Some(Instant::now() + CAPTION_LINGERS);
+    }
     if text.is_empty() && !enter {
         state.lock().unwrap().toast = Some(("Didn't catch that".into(), String::new(), Instant::now()));
     }
@@ -371,7 +383,11 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
         s.message = "Hold fn and talk".into();
         s.level = 0.0;
         s.hands_free = false;
-        s.draft.clear();
+        // Kept if it's the finished text, lingering; a take thrown away goes at once.
+        if s.draft_until.is_none_or(|t| t <= Instant::now()) {
+            s.draft.clear();
+            s.draft_until = None;
+        }
     };
     ready(&state);
 
@@ -489,6 +505,11 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
                 recording = true;
                 pressed_at = Instant::now();
                 ahead = None;
+                {
+                    let mut s = state.lock().unwrap();
+                    s.draft.clear();
+                    s.draft_until = None;
+                }
                 recorder.begin();
                 // The second tap of a double-tap already heard the first's sound.
                 if !last_tap.is_some_and(|t| t.elapsed() < DOUBLE_TAP) {

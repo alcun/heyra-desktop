@@ -87,7 +87,10 @@ const AHEAD_MIN_SECS: f32 = 10.0;
 const OVERLAP_SECS: f32 = 1.0;
 /// Drafts while talking only while the words not yet in a piece are this short: a
 /// draft the engine is still on when the take ends is waited for.
-const DRAFT_MAX_SECS: f32 = 8.0;
+const DRAFT_MAX_SECS: f32 = 6.0;
+/// Seconds of new words before the next draft: fewer drafts, less chance the end of a
+/// take finds the engine busy with one.
+const DRAFT_EVERY_SECS: f32 = 1.5;
 const AHEAD_MAX_SECS: f32 = 20.0;
 /// A pause: 100 ms at under this share of the take's speaking loudness.
 const PAUSE_SHARE: f32 = 0.12;
@@ -195,8 +198,8 @@ impl Ahead {
     /// they're short enough not to keep the engine from the end of the take for long.
     fn redraft(&mut self, len: usize, audio: Vec<f32>, from: usize) {
         let rate = self.sample_rate as f32;
-        let second = rate as usize;
-        let fresh = len >= self.cut + second && self.draft.as_ref().is_none_or(|(_, to, _)| len >= to + second);
+        let every = (DRAFT_EVERY_SECS * rate) as usize;
+        let fresh = len >= self.cut + every && self.draft.as_ref().is_none_or(|(_, to, _)| len >= to + every);
         if self.busy() || !fresh || len - self.cut > (DRAFT_MAX_SECS * rate) as usize {
             return;
         }

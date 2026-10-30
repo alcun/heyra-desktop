@@ -126,9 +126,14 @@ fragment float4 fs(VOut in [[stage_in]], constant U& u [[buffer(0)]]) {
     float halo = exp(-max(d - rs, 0.0) * 7.0) * (1.0 - disc) * (0.22 + 0.45 * u.voice + 0.3 * u.writing) * awake;
     float3 halo_col = mix(gold, cream, 0.3) * halo;
 
-    // At rest, a tiny gold point at the centre of the dark dot.
-    float pip = (1.0 - smoothstep(rs * 0.13, rs * 0.2, d)) * (1.0 - awake);
+    // At rest, a tiny gold point at the centre of the dark dot, and a fine gold ring
+    // just inside its edge, so it reads as a thing and not a stuck pixel.
+    float rest = 1.0 - awake;
+    float pip = (1.0 - smoothstep(rs * 0.13, rs * 0.2, d)) * rest;
     inner += gold * pip;
+    float ring = (1.0 - smoothstep(0.0, aa * 0.9, abs(d - (rs - aa * 1.1)))) * rest;
+    inner += gold * ring * 0.6;
+    halo_col += gold * exp(-max(d - rs, 0.0) / (aa * 3.0)) * (1.0 - disc) * rest * 0.16;
 
     float3 rgb = inner * disc + halo_col;
     float a = disc + (1.0 - disc) * clamp(max(halo_col.r, max(halo_col.g, halo_col.b)) * 1.2, 0.0, 1.0);
