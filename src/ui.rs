@@ -1880,7 +1880,10 @@ impl Render for OrbButton {
             .cursor_pointer()
             .hover(|d| d.text_color(rgb(GOLD)))
             .child(self.glyph)
-            .on_click(move |_, _, _| clicked.set(true))
+            .on_click(move |_, window, _| {
+                clicked.set(true);
+                give_back_keyboard(window);
+            })
     }
 }
 
@@ -2113,7 +2116,10 @@ impl Render for Caption {
                     .text_color(alpha(CREAM, 0.55))
                     .cursor_pointer()
                     .hover(|s| s.bg(alpha(CREAM, 0.16)).text_color(rgb(CREAM)))
-                    .on_click(move |_, _, _| closed.set(true))
+                    .on_click(move |_, window, _| {
+                        closed.set(true);
+                        give_back_keyboard(window);
+                    })
                     .child("✕")
             });
         div().size_full().flex().items_end().justify_center().pb(px(TOAST_MARGIN)).child(card)
@@ -2190,7 +2196,10 @@ impl Render for Held {
             .items_center()
             .gap_4()
             .cursor_pointer()
-            .on_click(move |_, _, _| clicked.set(true))
+            .on_click(move |_, window, _| {
+                clicked.set(true);
+                give_back_keyboard(window);
+            })
             .child(
                 div()
                     .flex_1()
@@ -2262,30 +2271,24 @@ fn click_through(window: &Window) {
     }
 }
 
-/// Make `window` (a GPUI panel) refuse key and main status: swap its class for a
-/// subclass, made once, whose canBecomeKeyWindow and canBecomeMainWindow say no. Clicks
-/// still arrive: GPUI takes the first click on a window that isn't key.
+/// Hand the keyboard back after a click on a floating panel. A click makes the panel
+/// the key window, so ⌘V would land here and beep instead of in the app you're typing
+/// in. A window ordered out loses key; ordered back without being made key, it stays shown.
 #[allow(unexpected_cfgs)]
-unsafe fn never_key(window: *mut objc::runtime::Object) {
-    use objc::declare::ClassDecl;
-    use objc::runtime::{BOOL, Class, NO, Object, Sel, object_getClass};
-    use objc::{sel, sel_impl};
-    use std::sync::OnceLock;
-    extern "C" fn no(_: &Object, _: Sel) -> BOOL {
-        NO
+pub fn give_back_keyboard(window: &Window) {
+    use objc::runtime::Object;
+    use objc::{msg_send, sel, sel_impl};
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let Ok(handle) = HasWindowHandle::window_handle(window) else { return };
+    if let RawWindowHandle::AppKit(appkit) = handle.as_raw() {
+        unsafe {
+            let view = appkit.ns_view.as_ptr() as *mut Object;
+            let native: *mut Object = msg_send![view, window];
+            let nil: *mut Object = std::ptr::null_mut();
+            let _: () = msg_send![native, orderOut: nil];
+            let _: () = msg_send![native, orderFrontRegardless];
+        }
     }
-    unsafe extern "C" {
-        fn object_setClass(obj: *mut Object, cls: *const Class) -> *const Class;
-    }
-    static CLASS: OnceLock<usize> = OnceLock::new();
-    let class = *CLASS.get_or_init(|| unsafe {
-        let superclass = &*object_getClass(window);
-        let mut decl = ClassDecl::new("HeyraFloatingPanel", superclass).expect("class name free");
-        decl.add_method(sel!(canBecomeKeyWindow), no as extern "C" fn(&Object, Sel) -> BOOL);
-        decl.add_method(sel!(canBecomeMainWindow), no as extern "C" fn(&Object, Sel) -> BOOL);
-        decl.register() as *const Class as usize
-    });
-    unsafe { object_setClass(window, class as *const Class) };
 }
 
 /// macOS draws a shadow around even a clear window, and a titled window's top edge;
@@ -2306,9 +2309,7 @@ fn no_shadow(window: &Window) {
             // still a non-activating panel) has none.
             const NONACTIVATING_PANEL: u64 = 1 << 7;
             let _: () = msg_send![native, setStyleMask: NONACTIVATING_PANEL];
-            // Never the key window: a click on the dot, a card or the words' × mustn't take
-            // the keyboard from the app you're typing in, or ⌘V lands here and beeps.
-            never_key(native);
+
         }
     }
 }
