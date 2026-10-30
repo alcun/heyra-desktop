@@ -84,6 +84,7 @@ pub fn transcribe_long(engine: &mut dyn Engine, sample_rate: u32, samples: &[f32
 /// A cut in the middle of speech loses words at the edges, so without a pause it waits,
 /// and only past `AHEAD_MAX_SECS` cuts at the quietest moment it has.
 const AHEAD_MIN_SECS: f32 = 10.0;
+const OVERLAP_SECS: f32 = 1.0;
 const AHEAD_MAX_SECS: f32 = 20.0;
 /// A pause: 100 ms at under this share of the take's speaking loudness.
 const PAUSE_SHARE: f32 = 0.12;
@@ -119,6 +120,13 @@ impl Ahead {
         Self { engine, sample_rate, cut: 0, looked: 0, pieces: Vec::new() }
     }
 
+    /// How much audio before a cut the next piece hears again. The engine often skips
+    /// the first words of audio that starts straight into speech; a second of what came
+    /// before brings them back, and the words heard twice are dropped (see `join`).
+    fn overlap(&self) -> usize {
+        (OVERLAP_SECS * self.sample_rate as f32) as usize
+    }
+
     /// Samples already sent to the engine.
     pub fn cut(&self) -> usize {
         self.cut
@@ -134,17 +142,20 @@ impl Ahead {
             return;
         }
         self.looked = len;
-        let audio = peek(self.cut);
-        if audio.len() < min {
+        // Each piece after the first hears the second before its cut again.
+        let from = self.cut.saturating_sub(self.overlap());
+        let mut chunk = peek(from);
+        let lead = self.cut - from;
+        if chunk.len() < lead + min {
             return;
         }
-        let end = match last_pause(&audio, min - (3.0 * rate) as usize, self.sample_rate) {
+        let audio = &chunk[lead..];
+        let end = match last_pause(audio, min - (3.0 * rate) as usize, self.sample_rate) {
             Some(end) => end,
-            None if audio.len() >= max => quietest(&audio, max - (5.0 * rate) as usize, max, self.sample_rate),
+            None if audio.len() >= max => quietest(audio, max - (5.0 * rate) as usize, max, self.sample_rate),
             None => return,
         };
-        let mut chunk = audio;
-        chunk.truncate(end);
+        chunk.truncate(lead + end);
         self.cut += end;
         let (engine, rate) = (self.engine.clone(), self.sample_rate);
         self.pieces.push(Piece::Writing(std::thread::spawn(move || lock(&engine).transcribe(rate, &chunk))));
@@ -154,12 +165,16 @@ impl Ahead {
     /// showing as it's written.
     pub fn written(&mut self) -> Vec<String> {
         let mut new = Vec::new();
+        let mut before = String::new();
         for piece in &mut self.pieces {
             if matches!(piece, Piece::Writing(h) if h.is_finished()) {
                 let Piece::Writing(handle) = std::mem::replace(piece, Piece::Written(String::new())) else { unreachable!() };
                 let text = handle.join().unwrap_or_default();
-                new.push(text.clone());
+                new.push(join(&before, &text));
                 *piece = Piece::Written(text);
+            }
+            if let Piece::Written(text) = piece {
+                before.clone_from(text);
             }
         }
         new
@@ -167,11 +182,57 @@ impl Ahead {
 
     /// The take's text, given the whole clip: the pieces done so far, then the rest.
     pub fn finish(self, samples: &[f32]) -> String {
-        let mut parts: Vec<String> = self.pieces.into_iter().map(Piece::text).collect();
-        let rest = samples.get(self.cut..).unwrap_or_default();
-        parts.push(transcribe_long(lock(&self.engine).as_mut(), self.sample_rate, rest));
+        let from = if self.pieces.is_empty() { 0 } else { self.cut.saturating_sub(self.overlap()) };
+        let rest = samples.get(from..).unwrap_or_default();
+        let rest = transcribe_long(lock(&self.engine).as_mut(), self.sample_rate, rest);
+        let mut texts: Vec<String> = self.pieces.into_iter().map(Piece::text).collect();
+        texts.push(rest);
+        let mut parts = Vec::new();
+        for (i, text) in texts.iter().enumerate() {
+            parts.push(if i == 0 { text.clone() } else { join(&texts[i - 1], text) });
+        }
         parts.retain(|p| !p.is_empty());
         parts.join(" ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::join;
+
+    #[test]
+    fn drops_words_heard_twice() {
+        assert_eq!(join("Turn them around.", "Turn them around at a rapid pace."), "at a rapid pace.");
+        assert_eq!(join("a dim phosphor bulb glowed.", "Bob glowed. When darkness fell."), "When darkness fell.");
+        assert_eq!(join("We went home", "Home we stayed."), "we stayed.");
+        assert_eq!(join("Nothing alike.", "Fresh words here."), "Fresh words here.");
+        assert_eq!(join("", "First piece."), "First piece.");
+    }
+}
+
+/// `next` without the words at its start that repeat the end of `before`: the overlap
+/// between two pieces, heard twice. Compared without case or punctuation.
+fn join(before: &str, next: &str) -> String {
+    let word = |w: &str| w.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect::<String>();
+    let tail: Vec<String> = before.split_whitespace().map(word).collect();
+    let head: Vec<&str> = next.split_whitespace().collect();
+    // The repeat can begin with a word or two clipped by the overlap's start ("bulb"
+    // heard as "Bob"): those go too, as long as whole words after them match.
+    let heard_twice = (0..=2)
+        .find_map(|clipped| {
+            (1..=head.len().saturating_sub(clipped).min(tail.len()).min(8))
+                .rev()
+                .find(|&k| tail[tail.len() - k..].iter().zip(&head[clipped..clipped + k]).all(|(a, b)| *a == word(b)))
+                .map(|k| clipped + k)
+        })
+        .unwrap_or(0);
+    let kept = head[heard_twice..].join(" ");
+    // A piece that began mid-sentence, now that its first words are gone: no capital.
+    match (heard_twice > 0, kept.chars().next()) {
+        (true, Some(c)) if c.is_uppercase() && !before.trim_end().ends_with(['.', '?', '!']) => {
+            c.to_lowercase().chain(kept.chars().skip(1)).collect()
+        }
+        _ => kept,
     }
 }
 
