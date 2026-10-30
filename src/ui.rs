@@ -246,7 +246,6 @@ fn light(phase: Phase) -> Div {
     div().flex_none().size(px(7.)).rounded_full().bg(rgb(color))
 }
 
-/// The segmented meter: `lit` of `count` segments on, graded from slate to cream to gold.
 /// iOS's inset grouped list: a title above, rows in a rounded card split by inset
 /// hairlines, and a footnote below.
 fn group(name: Option<&'static str>, items: Vec<AnyElement>, footer: Option<SharedString>) -> Div {
@@ -296,24 +295,6 @@ fn switch(id: &'static str, text: &'static str, on: bool, set: impl Fn(bool) + '
         .into_any_element()
 }
 
-fn meter(count: usize, lit: usize, live: bool, horizontal: bool) -> Div {
-    let segments = (0..count).map(move |i| {
-        let on = i < lit;
-        let color = if !on {
-            alpha(p().dim, 0.35)
-        } else if i * 10 >= count * 8 {
-            rgb(p().gold).into()
-        } else if live {
-            rgb(p().ink).into()
-        } else {
-            rgb(p().slate).into()
-        };
-        let seg = div().rounded(px(1.)).bg(color);
-        if horizontal { seg.w(px(5.)).h(px(14.)) } else { seg.w(px(8.)).h(px(3.)) }
-    });
-    let row = div().flex().gap(px(3.)).children(segments);
-    if horizontal { row.flex_row().items_center() } else { row.flex_col_reverse().items_center() }
-}
 
 fn clock(at: u64) -> String {
     Local
@@ -361,6 +342,7 @@ impl gpui::AssetSource for Icons {
             "icons/dictionary.svg" => include_bytes!("../assets/icons/dictionary.svg"),
             "icons/settings.svg" => include_bytes!("../assets/icons/settings.svg"),
             "icons/sidebar.svg" => include_bytes!("../assets/icons/sidebar.svg"),
+            "icons/chevron.svg" => include_bytes!("../assets/icons/chevron.svg"),
             _ => return Ok(None),
         };
         Ok(Some(std::borrow::Cow::Borrowed(bytes)))
@@ -438,7 +420,6 @@ pub struct Main {
     page: Page,
     copied: Option<usize>,
     born: Instant,
-    show_other_mics: bool,
     /// What the window last drew from: it redraws only when this changes.
     seen: u64,
     ticks: u32,
@@ -449,6 +430,8 @@ pub struct Main {
     rail_since: Instant,
     /// What the pointer is on, for its tooltip.
     hovered: Option<SharedString>,
+    /// The dropdown that's open, if any.
+    menu: Option<&'static str>,
     /// The orb in Home's card: its shader, motion, last frame, and when that was drawn.
     orb: Option<crate::gpu_orb::Gpu>,
     orb_motion: crate::gpu_orb::Motion,
@@ -547,7 +530,6 @@ pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
                     },
                     copied: None,
                     born: Instant::now(),
-                    show_other_mics: false,
                     seen: 0,
                     ticks: 59,
                     // Filled in by the first poll, off this thread.
@@ -558,6 +540,7 @@ pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
                     rail_from: RAIL_WIDE,
                     // HEYRA_TIP=nav-dict (any tooltip's key) shows it as if hovered: for screenshots.
                     hovered: std::env::var("HEYRA_TIP").ok().map(Into::into),
+                    menu: std::env::var("HEYRA_MENU").ok().and_then(|m| ["mic", "model"].into_iter().find(|k| *k == m)),
                     orb: crate::gpu_orb::Gpu::new().ok(),
                     orb_motion: crate::gpu_orb::Motion::new(1.0),
                     orb_last: Instant::now(),
@@ -625,6 +608,59 @@ impl Main {
             self.orb_last = Instant::now();
         }
         Some(frame)
+    }
+
+    /// A row that opens a menu: its name, what's chosen and a chevron; the menu floats
+    /// below its right edge on the top layer, and closes on a pick or a click elsewhere.
+    fn dropdown(&self, id: &'static str, name: &'static str, current: String, status: Option<(String, u32)>, items: Vec<AnyElement>, cx: &Context<Self>) -> AnyElement {
+        let open = self.menu == Some(id);
+        let panel = div()
+            .id(ElementId::Name(format!("menu-{id}").into()))
+            .w(px(420.))
+            .max_h(px(380.))
+            .overflow_y_scroll()
+            .p(px(6.))
+            .flex()
+            .flex_col()
+            .rounded(px(12.))
+            .bg(rgb(if is_light() { 0xffffff } else { 0x2a2c36 }))
+            .border_1()
+            .border_color(rgb(p().hair))
+            .shadow(vec![gpui::BoxShadow {
+                color: alpha(0x000000, 0.35),
+                offset: point(px(0.), px(12.)),
+                blur_radius: px(32.),
+                spread_radius: px(0.),
+            }])
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.menu = None;
+                cx.notify();
+            }))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.menu = None;
+                cx.notify();
+            }))
+            .children(items.into_iter().map(|item| div().rounded(px(8.)).overflow_hidden().child(item)));
+        let menu = gpui::deferred(gpui::anchored().anchor(gpui::Corner::TopRight).child(div().mt(px(6.)).child(gpui::AnimationExt::with_animation(
+            panel,
+            ("menu-in", id.len()),
+            gpui::Animation::new(Duration::from_millis(140)).with_easing(gpui::ease_out_quint()),
+            |panel, t| panel.opacity(t).mt(px(-6. * (1. - t))),
+        ))))
+        .with_priority(2);
+        row(id)
+            .cursor_pointer()
+            .hover(|s| s.bg(alpha(p().ink, 0.035)))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.menu = if this.menu == Some(id) { None } else { Some(id) };
+                cx.notify();
+            }))
+            .child(div().flex_1().text_size(px(15.)).text_color(rgb(p().ink)).child(name))
+            .children(status.map(|(text, color)| div().font_family(MONO).text_xs().text_color(rgb(color)).child(text)))
+            .child(div().text_size(px(15.)).text_color(rgb(p().slate)).child(short(&current, 34)))
+            .child(gpui::svg().path("icons/chevron.svg").size(px(15.)).text_color(rgb(if open { p().gold } else { p().slate })))
+            .child(div().relative().w_0().h_full().when(open, |d| d.child(div().absolute().top_full().right_0().child(menu))))
+            .into_any_element()
     }
 
     /// Give `el` a tooltip that shows the moment it's hovered.
@@ -1111,9 +1147,9 @@ impl Main {
     }
 
     fn settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (devices, chosen, in_use, ting_heard, level) = {
+        let (devices, chosen, in_use, ting_heard) = {
             let s = self.state.lock().unwrap();
-            (s.devices.clone(), s.mic.clone(), s.mic_in_use.clone(), s.ting_heard, s.level)
+            (s.devices.clone(), s.mic.clone(), s.mic_in_use.clone(), s.ting_heard)
         };
         let mac_default = &self.slow.mac_default;
         // Real mics first; the Mac's own choice; then phones and virtual devices, folded away.
@@ -1131,10 +1167,8 @@ impl Main {
             })
             .collect();
         options.push((format!("Same as the Mac ({mac_default})"), None, None));
-        let other_count = other.len();
-        if self.show_other_mics {
-            options.extend(other.into_iter().map(|m| (m.name.clone(), None, Some(m.name))));
-        }
+        options.extend(other.into_iter().map(|m| (m.name.clone(), None, Some(m.name))));
+        let current_mic = chosen.clone().unwrap_or_else(|| "Same as the Mac".into());
         let mut rows: Vec<AnyElement> = Vec::new();
         for (i, (name, tag, value)) in options.into_iter().enumerate() {
             let selected = chosen == value;
@@ -1165,27 +1199,6 @@ impl Main {
                     )
                     .child(div().flex_1().text_size(px(15.)).text_color(rgb(if selected { p().ink } else { p().slate })).child(name))
                     .children(tag.map(|t| div().font_family(MONO).text_xs().text_color(rgb(if t == "FX MIC" { p().gold } else { p().dim })).child(t)))
-                    .when(selected, |d| d.child(meter(10, ((level * 1.15).min(1.0) * 10.) as usize, true, true)))
-                    .into_any_element(),
-            );
-        }
-        if other_count > 0 {
-            let show = self.show_other_mics;
-            rows.push(
-                div()
-                    .id("other-mics")
-                    .py(px(14.))
-                    .px(px(18.))
-                    .font_family(MONO)
-                    .text_xs()
-                    .text_color(rgb(p().slate))
-                    .cursor_pointer()
-                    .hover(|s| s.text_color(rgb(p().ink)))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.show_other_mics = !show;
-                        cx.notify();
-                    }))
-                    .child(if show { "HIDE OTHER DEVICES".to_string() } else { format!("OTHER DEVICES ({other_count})") })
                     .into_any_element(),
             );
         }
@@ -1196,12 +1209,18 @@ impl Main {
         };
         let ink_row = |id: &'static str, text: String| row(id).child(div().flex_1().text_size(px(15.)).text_color(rgb(p().ink)).child(text));
 
-        // Microphone: the mics, then keeping it ready.
-        rows.push(switch("ready", "Keep the mic ready", KEEP_MIC_READY.load(Ordering::Relaxed), |on| {
-            KEEP_MIC_READY.store(on, Ordering::Relaxed);
-            store::save_settings(&store::Settings { keep_mic_ready: on, ..store::load_settings() });
-        }));
-        let mic = group(Some("MICROPHONE"), rows, Some("Off: the mic light goes out between takes.".into()));
+        // Microphone: a menu of mics, then keeping it ready.
+        let mic = group(
+            Some("MICROPHONE"),
+            vec![
+                self.dropdown("mic", "Microphone", current_mic, None, rows, cx),
+                switch("ready", "Keep the mic ready", KEEP_MIC_READY.load(Ordering::Relaxed), |on| {
+                    KEEP_MIC_READY.store(on, Ordering::Relaxed);
+                    store::save_settings(&store::Settings { keep_mic_ready: on, ..store::load_settings() });
+                }),
+            ],
+            Some("Off: the mic light goes out between takes.".into()),
+        );
 
         // Push to talk.
         let recording = crate::hotkey::recording();
@@ -1473,6 +1492,12 @@ impl Main {
         let action = |id: &'static str, text: &'static str| {
             row(id).cursor_pointer().hover(|s| s.bg(alpha(p().ink, 0.035))).child(div().text_size(px(15.)).text_color(rgb(p().gold)).child(text))
         };
+        // The one in use, or the one on its way with how it's going.
+        let (current, current_status) = match &switching {
+            Some(next) => (next.name(), Some(status(next, (String::new(), p().dim)))),
+            None => (in_use.name(), (phase == Phase::Loading).then(|| status(&in_use, (String::new(), p().dim)))),
+        };
+        let mut rows = vec![self.dropdown("model", "Voice model", current, current_status, rows, cx)];
         rows.push(choose.into_any_element());
         rows.push(
             action("data", "Open data folder")
