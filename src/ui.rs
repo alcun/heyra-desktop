@@ -262,12 +262,14 @@ fn light(phase: Phase) -> Div {
 /// iOS's inset grouped list: a title above, rows in a rounded card split by inset
 /// hairlines, and a footnote below.
 fn group(name: Option<&'static str>, items: Vec<AnyElement>, footer: Option<SharedString>) -> Div {
-    let mut card = div().flex().flex_col().rounded(px(12.)).bg(rgb(p().panel)).border_1().border_color(rgb(p().hair)).overflow_hidden();
+    // The card has a little padding; each row's highlight is a rounded pill inside it,
+    // and the hairlines stop short of both edges, as macOS lists do.
+    let mut card = div().flex().flex_col().p(px(6.)).rounded(px(14.)).bg(rgb(p().panel)).border_1().border_color(rgb(p().hair));
     for (i, item) in items.into_iter().enumerate() {
         if i > 0 {
-            card = card.child(div().h(px(1.)).ml(px(18.)).bg(rgb(p().hair)));
+            card = card.child(divider());
         }
-        card = card.child(item);
+        card = card.child(div().rounded(px(9.)).overflow_hidden().child(item));
     }
     div()
         .flex()
@@ -278,9 +280,14 @@ fn group(name: Option<&'static str>, items: Vec<AnyElement>, footer: Option<Shar
         .children(footer.map(|f| hint(f).px(px(18.)).pt_1()))
 }
 
+/// The hairline between rows in a group, inset from both edges.
+fn divider() -> Div {
+    div().h(px(1.)).mx(px(12.)).bg(rgb(p().hair))
+}
+
 /// A row in a group: comfortable to hit, lit faintly under the pointer when it does something.
 fn row(id: impl Into<gpui::ElementId>) -> Stateful<Div> {
-    div().id(id).flex().items_center().gap_3().min_h(px(48.)).px(px(18.)).py(px(12.))
+    div().id(id).flex().items_center().gap_3().min_h(px(46.)).px(px(12.)).py(px(11.))
 }
 
 /// A setting that's on or off: an iOS toggle at the row's end. `set` gets the new value.
@@ -372,18 +379,47 @@ impl gpui::AssetSource for Icons {
 }
 
 /// One take: number and time, your words, duration. A click copies it.
-/// `full`: every word (History); otherwise three lines at most (Home).
-fn take(index: usize, entry: &store::Entry, copied: bool, full: bool, main: gpui::WeakEntity<Main>) -> AnyElement {
+/// `full`: every word (History); otherwise three lines at most (Home). `lit`: the
+/// pointer's on it, so its highlight springs in.
+fn take(index: usize, entry: &store::Entry, copied: bool, full: bool, lit: bool, main: gpui::WeakEntity<Main>) -> AnyElement {
     let text = entry.text.clone();
+    let key: SharedString = format!("take-{index}").into();
+    let hover_main = main.clone();
     div()
         .id(("take", index))
+        .relative()
         .w_full()
         .flex()
         .gap_6()
-        .py_4()
-        .px(px(18.))
+        .py(px(14.))
+        .px(px(12.))
         .cursor_pointer()
-        .hover(|s| s.bg(alpha(p().ink, 0.035)))
+        .on_hover(move |hovered, _, cx| {
+            let key = key.clone();
+            let _ = hover_main.update(cx, |main, cx| {
+                if *hovered {
+                    main.hovered = Some(key);
+                } else if main.hovered.as_ref() == Some(&key) {
+                    main.hovered = None;
+                }
+                cx.notify();
+            });
+        })
+        // The highlight: a rounded pill that grows in with a little overshoot.
+        .when(lit, |d| {
+            d.child(gpui::AnimationExt::with_animation(
+                div().absolute().top_0().bottom_0().left_0().right_0().rounded(px(9.)).bg(alpha(p().ink, 0.055)),
+                ElementId::Name(format!("lit-{index}").into()),
+                gpui::Animation::new(Duration::from_millis(260)).with_easing(|t: f32| {
+                    let (c1, c3) = (1.7_f32, 2.7_f32);
+                    1. + c3 * (t - 1.).powi(3) + c1 * (t - 1.).powi(2)
+                }),
+                |pill, t| {
+                    let inset = 5. * (1. - t);
+                    pill.top(px(inset)).bottom(px(inset)).left(px(inset * 2.)).right(px(inset * 2.)).opacity((t * 1.5).min(1.))
+                },
+            ))
+        })
         .on_click(move |_, _, cx| {
             if let Ok(mut clipboard) = arboard::Clipboard::new() {
                 let _ = clipboard.set_text(text.clone());
@@ -395,6 +431,7 @@ fn take(index: usize, entry: &store::Entry, copied: bool, full: bool, main: gpui
         })
         .child(
             div()
+                .relative()
                 .flex_1()
                 .min_w_0()
                 .font_family(SANS)
@@ -407,6 +444,7 @@ fn take(index: usize, entry: &store::Entry, copied: bool, full: bool, main: gpui
         // When, and how long, on the right.
         .child(
             div()
+                .relative()
                 .flex_none()
                 .w(px(72.))
                 .pt(px(3.))
@@ -1095,7 +1133,7 @@ impl Main {
         let me = cx.entity().downgrade();
         let recent: Vec<AnyElement> = {
             let s = self.state.lock().unwrap();
-            (0..count).rev().take(6).map(|i| take(i, &s.history[i], self.copied == Some(i), false, me.clone())).collect()
+            (0..count).rev().take(6).map(|i| take(i, &s.history[i], self.copied == Some(i), false, self.hovered.as_ref().map(|h| h.as_ref()) == Some(format!("take-{i}").as_str()), me.clone())).collect()
         };
         div()
             .flex()
@@ -1126,7 +1164,7 @@ impl Main {
         } else if count < known {
             self.takes.reset(count);
         }
-        let (state, copied, me) = (self.state.clone(), self.copied, cx.entity().downgrade());
+        let (state, copied, me, hovered) = (self.state.clone(), self.copied, cx.entity().downgrade(), self.hovered.clone());
         div()
             .size_full()
             .flex()
@@ -1139,7 +1177,8 @@ impl Main {
                     .flex_1()
                     .min_h_0()
                     .mb(px(28.))
-                    .rounded(px(12.))
+                    .p(px(6.))
+                    .rounded(px(14.))
                     .bg(rgb(p().panel))
                     .border_1()
                     .border_color(rgb(p().hair))
@@ -1154,8 +1193,8 @@ impl Main {
                                 .w_full()
                                 .flex()
                                 .flex_col()
-                                .when(n > 0, |d| d.child(div().h(px(1.)).ml(px(18.)).bg(rgb(p().hair))))
-                                .child(take(i, entry, copied == Some(i), true, me.clone()))
+                                .when(n > 0, |d| d.child(divider()))
+                                .child(take(i, entry, copied == Some(i), true, hovered.as_ref().map(|h| h.as_ref()) == Some(format!("take-{i}").as_str()), me.clone()))
                                 .into_any_element()
                         })
                         .size_full(),
@@ -1383,9 +1422,9 @@ impl Main {
                     .flex()
                     .items_center()
                     .gap_3()
-                    .min_h(px(48.))
-                    .py(px(12.))
-                    .px(px(18.))
+                    .min_h(px(46.))
+                    .py(px(11.))
+                    .px(px(12.))
                     .cursor_pointer()
                     .hover(|s| s.bg(alpha(p().ink, 0.035)))
                     .on_click(cx.listener(move |_, _, _, cx| {
@@ -1504,9 +1543,9 @@ impl Main {
                 .flex()
                 .items_center()
                 .gap_3()
-                .min_h(px(48.))
-                .py(px(12.))
-                .px(px(18.))
+                .min_h(px(46.))
+                .py(px(11.))
+                .px(px(12.))
                 .cursor_pointer()
                 .hover(|s| s.bg(alpha(p().ink, 0.035)))
                 .child(
