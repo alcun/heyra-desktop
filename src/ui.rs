@@ -344,6 +344,8 @@ fn grouped(n: usize) -> String {
 // ---- main window ----
 
 const RAIL_WIDE: f32 = 212.;
+/// The orb in Home's card.
+const ORB_CARD: f32 = 120.;
 const RAIL_NARROW: f32 = 66.;
 
 /// The icons, drawn for Heyra, built into the app.
@@ -445,6 +447,12 @@ pub struct Main {
     rail_since: Instant,
     /// What the pointer is on, for its tooltip.
     hovered: Option<SharedString>,
+    /// The orb in Home's card: its shader, motion, last frame, and when that was drawn.
+    orb: Option<crate::gpu_orb::Gpu>,
+    orb_motion: crate::gpu_orb::Motion,
+    orb_last: Instant,
+    orb_image: Option<std::sync::Arc<gpui::RenderImage>>,
+    orb_phase: Option<Phase>,
     /// The width the latest slide started from.
     rail_from: f32,
     /// History, newest first: only the rows on screen are laid out.
@@ -545,6 +553,11 @@ pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
                     rail_from: RAIL_WIDE,
                     // HEYRA_TIP=nav-dict (any tooltip's key) shows it as if hovered: for screenshots.
                     hovered: std::env::var("HEYRA_TIP").ok().map(Into::into),
+                    orb: crate::gpu_orb::Gpu::new().ok(),
+                    orb_motion: crate::gpu_orb::Motion::new(1.0),
+                    orb_last: Instant::now(),
+                    orb_image: None,
+                    orb_phase: None,
                     takes: gpui::ListState::new(0, gpui::ListAlignment::Top, px(600.)),
                 }
             })
@@ -568,6 +581,39 @@ impl Main {
         let wd = w * (1.0 - DAMPING * DAMPING).sqrt();
         let progress = 1.0 - (-DAMPING * w * t).exp() * ((wd * t).cos() + DAMPING * w / wd * (wd * t).sin());
         (self.rail_from + (to - self.rail_from) * progress, true)
+    }
+
+    /// Home's orb. A new frame only while it moves (talking, writing) or when the state
+    /// changes; otherwise the last one, so scrolling never waits on the GPU.
+    fn orb_frame(&mut self, window: &mut Window, phase: Phase, level: f32) -> Option<std::sync::Arc<gpui::RenderImage>> {
+        let moving = matches!(phase, Phase::Listening | Phase::Transcribing);
+        let settling = self.orb_last.elapsed() < Duration::from_millis(900);
+        if self.orb_image.is_some() && !moving && !settling && self.orb_phase == Some(phase) {
+            return self.orb_image.clone();
+        }
+        if self.orb_phase != Some(phase) {
+            self.orb_phase = Some(phase);
+            self.orb_last = Instant::now();
+        }
+        let dt = 1.0 / 60.0;
+        self.orb_motion.step(dt, phase == Phase::Listening, phase == Phase::Transcribing, false, level, 1.0);
+        let gpu = self.orb.as_ref()?;
+        let pixels = (ORB_CARD * window.scale_factor()) as u64;
+        let mut uniforms = self.orb_motion.uniforms();
+        uniforms.res = [pixels as f32, pixels as f32];
+        let bgra = gpu.snapshot(pixels, &uniforms);
+        let buffer = image::RgbaImage::from_raw(pixels as u32, pixels as u32, bgra)?;
+        let frame = std::sync::Arc::new(gpui::RenderImage::new([image::Frame::new(buffer)]));
+        if let Some(old) = self.orb_image.replace(frame.clone()) {
+            let _ = window.drop_image(old);
+        }
+        if moving || settling {
+            window.request_animation_frame();
+        }
+        if moving {
+            self.orb_last = Instant::now();
+        }
+        Some(frame)
     }
 
     /// Give `el` a tooltip that shows the moment it's hovered.
@@ -673,7 +719,7 @@ impl Main {
             .child(div().whitespace_nowrap().opacity(shown).child(text))
     }
 
-    fn home(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn home(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let s = self.state.lock().unwrap();
         let (phase, message) = match &s.blocker {
             Some(b) => (Phase::Error, b.clone()),
@@ -735,59 +781,83 @@ impl Main {
         let mic = s.mic_in_use.clone();
         drop(s);
 
-        let t = self.born.elapsed().as_secs_f32();
-        const SEGMENTS: usize = 32;
-        let lit = match phase {
-            Phase::Listening => ((level * 1.15).min(1.0) * SEGMENTS as f32) as usize,
-            Phase::Transcribing => ((t * 24.0) as usize) % SEGMENTS,
-            Phase::Loading => progress.map(|p| (p * SEGMENTS as f32) as usize).unwrap_or(0),
-            _ => 0,
-        };
+        let frame = self.orb_frame(window, phase, level);
         let state_word = match phase {
-            Phase::Listening => "p().rec",
+            Phase::Listening => "LISTENING",
             Phase::Transcribing => "WRITING",
             Phase::Loading => "LOADING",
             Phase::Ready => "READY",
             Phase::Error => "CHECK",
         };
 
+        // A viewport into space: the orb itself, live, among a few stars. Always dark,
+        // whatever the theme: it's a window onto the dot's world.
+        let stars = (0..42u32).map(|i| {
+            // Fixed, scattered places: a cheap hash of the index.
+            let h = |k: u32| ((i.wrapping_mul(2654435761).wrapping_add(k.wrapping_mul(40503))) >> 8) % 1000;
+            let (x, y) = (h(1) as f32 / 1000., h(2) as f32 / 1000.);
+            let bright = 0.12 + (h(3) as f32 / 1000.) * 0.5;
+            let size = if h(4) % 7 == 0 { 2. } else { 1.2 };
+            div()
+                .absolute()
+                .left(gpui::relative(x))
+                .top(gpui::relative(y))
+                .size(px(size))
+                .rounded_full()
+                .bg(alpha(CREAM, bright))
+        });
+        let live = matches!(phase, Phase::Listening | Phase::Transcribing);
         let deck = div()
-            .flex()
-            .flex_col()
-            .gap_5()
-            .p_8()
-            .rounded(px(14.))
-            .bg(rgb(p().panel))
+            .relative()
+            .overflow_hidden()
+            .rounded(px(16.))
             .border_1()
-            .border_color(rgb(p().hair))
+            .border_color(alpha(CREAM, 0.07))
+            .bg(gpui::linear_gradient(
+                135.,
+                gpui::linear_color_stop(rgb(0x07080c), 0.),
+                gpui::linear_color_stop(rgb(0x151824), 1.),
+            ))
+            .children(stars)
             .child(
                 div()
+                    .relative()
                     .flex()
                     .items_center()
-                    .justify_between()
+                    .gap(px(28.))
+                    .px(px(28.))
+                    .py(px(22.))
+                    .child(div().flex_none().size(px(ORB_CARD)).children(frame.map(|f| gpui::img(gpui::ImageSource::Render(f)).size(px(ORB_CARD)))))
                     .child(
                         div()
+                            .flex_1()
+                            .min_w_0()
                             .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(light(phase))
-                            .child(readout(state_word).text_sm().font_weight(FontWeight::MEDIUM)),
-                    )
-                    .child(meter(SEGMENTS, lit, phase == Phase::Listening, true)),
-            )
-            .child(div().min_w_0().font_family(SANS).text_size(px(17.)).line_height(px(25.)).text_color(rgb(p().ink)).child(message))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_x_4()
-                    .gap_y_1()
-                    .child(label(format!(
-                        "{} · {} · {}",
-                        short(&mic, 28).to_uppercase(),
-                        self.state.lock().unwrap().model.name().to_uppercase(),
-                        latency.to_uppercase()
-                    ))),
+                            .flex_col()
+                            .gap(px(10.))
+                            .child(
+                                div()
+                                    .font_family(DISPLAY)
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_size(px(24.))
+                                    .text_color(rgb(if live || phase == Phase::Error { GOLD } else { CREAM }))
+                                    .child(tracked(state_word)),
+                            )
+                            .child(div().font_family(SANS).text_size(px(16.)).line_height(px(23.)).text_color(alpha(CREAM, 0.72)).child(message))
+                            .child(
+                                div()
+                                    .pt(px(6.))
+                                    .font_family(MONO)
+                                    .text_size(px(10.5))
+                                    .text_color(alpha(CREAM, 0.38))
+                                    .child(format!(
+                                        "{}  ·  {}  ·  {}",
+                                        short(&mic, 28).to_uppercase(),
+                                        self.state.lock().unwrap().model.name().to_uppercase(),
+                                        latency.to_uppercase()
+                                    )),
+                            ),
+                    ),
             );
 
         let card = || div().flex().flex_col().p_7().rounded(px(14.)).bg(rgb(p().panel)).border_1().border_color(rgb(p().hair));
@@ -1430,7 +1500,7 @@ impl Render for Main {
             (if s.blocker.is_some() { Phase::Error } else { s.phase }, s.mic_in_use.clone())
         };
         let page = match self.page {
-            Page::Home => self.home(cx).into_any_element(),
+            Page::Home => self.home(window, cx).into_any_element(),
             Page::History => self.history(cx).into_any_element(),
             Page::Dictionary => self.dictionary().into_any_element(),
             Page::Settings => self.settings(cx).into_any_element(),
@@ -1490,7 +1560,7 @@ impl Render for Main {
                     .gap_1()
                     .whitespace_nowrap()
                     .child(div().flex().items_center().gap_2().child(light(phase)).child(label(match phase {
-                        Phase::Listening => "p().rec",
+                        Phase::Listening => "REC",
                         Phase::Transcribing => "WRITING",
                         Phase::Loading => "LOADING",
                         Phase::Ready => "READY · FN",
