@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.3
+
+- Home's status is a window into space: the orb itself, drifting, alive when you talk,
+  with your mic and model as pills that open menus.
+- Settings in iOS-style groups, with the microphone and voice model as menus.
+  History shows every take in full.
+- Theme at the top right: Dark, Light or Match the Mac.
+- Tooltips spring in. Rows highlight with a rounded pill.
+- An × on the words above the dot turns them off.
+- After the download, a model says SETTING UP while it gets ready.
+- Fixed: clicking the dot's panels could keep the keyboard, so takes didn't paste.
+- Fixed: a thin white line above the words box on dark screens.
+
 ## 0.5.2
 
 - Heyra keeps itself up to date: once a day it checks for a new version and, if you
