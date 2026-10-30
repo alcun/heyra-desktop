@@ -49,6 +49,7 @@ fn transcribe_live(path: &str) {
     let step = (rate as f32 * 0.03) as usize;
     let mut ahead = engine::Ahead::new(engine.clone(), rate);
     let mut len = 0;
+    let mut shown = String::new();
     eprintln!("start");
     while len < samples.len() {
         std::thread::sleep(Duration::from_millis(30));
@@ -58,8 +59,10 @@ fn transcribe_live(path: &str) {
         if ahead.cut() != before {
             eprintln!("cut {:.2}", ahead.cut() as f32 / rate as f32);
         }
-        for text in ahead.written() {
-            eprintln!("piece {}", serde_json::to_string(&text).unwrap_or_default());
+        let so_far = ahead.so_far();
+        if so_far != shown {
+            eprintln!("draft {}", serde_json::to_string(&so_far).unwrap_or_default());
+            shown = so_far;
         }
     }
     let started = Instant::now();
@@ -461,13 +464,15 @@ fn main() {
         let pressed = [std::rc::Rc::new(std::cell::Cell::new(false)), std::rc::Rc::new(std::cell::Cell::new(false))];
         let mut button_windows: Vec<gpui::WindowHandle<ui::OrbButton>> = Vec::new();
         let mut toast: Option<(gpui::WindowHandle<ui::Toast>, Instant)> = None;
+        let mut caption: Option<(gpui::WindowHandle<ui::Caption>, String)> = None;
         cx.spawn(async move |cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(16)).await;
                 frame = frame.wrapping_add(1);
-                let (phase, level, hands_free, note) = {
+                let (phase, level, hands_free, note, draft) = {
                     let s = state.lock().unwrap();
-                    (s.phase, s.level, s.hands_free, s.toast.clone())
+                    let talking = matches!(s.phase, Phase::Listening | Phase::Transcribing);
+                    (s.phase, s.level, s.hands_free, s.toast.clone(), if talking { s.draft.clone() } else { String::new() })
                 };
                 let ok = cx.update(|cx| {
                     // At rest, the pointer over the dot wakes it a little; a click opens Heyra.
@@ -515,6 +520,26 @@ fn main() {
                             let view = ui::Toast { lead: lead.clone(), text: text.clone() };
                             toast = ui::open_toast(cx, centre, above, view).map(|h| (h, *at));
                         }
+                    }
+                    // The words so far, above the orb; redrawn only when they change.
+                    match (&mut caption, draft.is_empty(), orb.centre()) {
+                        (Some((h, _)), true, _) => {
+                            let _ = h.update(cx, |_, window, _| window.remove_window());
+                            caption = None;
+                        }
+                        (Some((h, shown)), false, _) if *shown != draft => {
+                            let text = draft.clone();
+                            let _ = h.update(cx, |c, window, _| {
+                                c.text = text;
+                                window.refresh();
+                            });
+                            *shown = draft;
+                        }
+                        (None, false, Some(centre)) => {
+                            let view = ui::Caption { text: draft.clone() };
+                            caption = ui::open_caption(cx, centre, 118., view).map(|h| (h, draft));
+                        }
+                        _ => {}
                     }
                     for ((_, _, cmd), clicked) in buttons.iter().zip(&pressed) {
                         if clicked.replace(false) {

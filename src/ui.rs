@@ -1229,6 +1229,85 @@ impl Render for Toast {
     }
 }
 
+/// The words so far, above the orb while talking: the take written as it's heard.
+pub struct Caption {
+    pub text: String,
+}
+
+const CAPTION_WIDTH: f32 = 560.;
+const CAPTION_HEIGHT: f32 = 76.;
+
+/// `above`: how far above the orb's centre the caption's middle sits.
+pub fn open_caption(cx: &mut App, centre: (f64, f64), above: f32, caption: Caption) -> Option<gpui::WindowHandle<Caption>> {
+    let (width, height) = (CAPTION_WIDTH + TOAST_MARGIN * 2., CAPTION_HEIGHT + TOAST_MARGIN * 2.);
+    let origin = point(px(centre.0 as f32 - width / 2.), px(centre.1 as f32 - above - height / 2.));
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds { origin, size: size(px(width), px(height)) })),
+            titlebar: None,
+            focus: false,
+            show: true,
+            kind: gpui::WindowKind::PopUp,
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            window_background: gpui::WindowBackgroundAppearance::Transparent,
+            ..Default::default()
+        },
+        |_, cx| cx.new(|_| caption),
+    )
+    .ok()
+    .inspect(|handle| {
+        let _ = handle.update(cx, |_, window, _| {
+            no_shadow(window);
+            click_through(window);
+        });
+    })
+}
+
+impl Render for Caption {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        // The end of what's been said: about two lines, from a word's start.
+        const SHOWN: usize = 150;
+        let chars = self.text.chars().count();
+        let tail: String = if chars > SHOWN {
+            let cut: String = self.text.chars().skip(chars - SHOWN).collect();
+            format!("…{}", cut.split_once(' ').map_or(cut.as_str(), |(_, rest)| rest))
+        } else {
+            self.text.clone()
+        };
+        let card = div()
+            .w(px(CAPTION_WIDTH))
+            .max_h(px(CAPTION_HEIGHT))
+            .px(px(18.))
+            .py(px(12.))
+            .rounded(px(14.))
+            .bg(gpui::linear_gradient(
+                180.,
+                gpui::linear_color_stop(alpha(0x30323c, 0.96), 0.),
+                gpui::linear_color_stop(alpha(GROUND, 0.96), 1.),
+            ))
+            .border_1()
+            .border_color(alpha(CREAM, 0.07))
+            .shadow(vec![gpui::BoxShadow {
+                color: alpha(0x000000, 0.35),
+                offset: point(px(0.), px(4.)),
+                blur_radius: px(14.),
+                spread_radius: px(0.),
+            }])
+            .flex()
+            .flex_col()
+            .justify_end()
+            .overflow_hidden()
+            .font_family(SANS)
+            .text_size(px(15.))
+            .line_height(px(22.))
+            .text_color(rgb(CREAM))
+            .child(tail);
+        div().size_full().flex().items_end().justify_center().pb(px(TOAST_MARGIN)).child(card)
+    }
+}
+
 /// The toast only informs: clicks go to whatever is under it.
 #[allow(unexpected_cfgs)]
 fn click_through(window: &Window) {

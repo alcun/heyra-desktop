@@ -58,6 +58,8 @@ pub struct State {
     pub model_error: Option<(Choice, String)>,
     /// A download stopped and tries again by itself: why, and when.
     pub retry: Option<(String, Instant)>,
+    /// The take's words so far, while talking and until they're pasted.
+    pub draft: String,
 }
 
 pub type Shared = Arc<Mutex<State>>;
@@ -175,6 +177,7 @@ pub fn new_state() -> Shared {
         switching: None,
         model_error: None,
         retry: None,
+        draft: String::new(),
     }))
 }
 
@@ -368,6 +371,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
         s.message = "Hold fn and talk".into();
         s.level = 0.0;
         s.hands_free = false;
+        s.draft.clear();
     };
     ready(&state);
 
@@ -434,9 +438,14 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
         // The level shows in Settings too, so a mic can be checked without talking to an app.
         state.lock().unwrap().level = recorder.level();
         if recording {
-            ahead
-                .get_or_insert_with(|| Ahead::new(engine.clone(), recorder.sample_rate))
-                .feed(recorder.len(), |from| recorder.peek(from));
+            let take = ahead.get_or_insert_with(|| Ahead::new(engine.clone(), recorder.sample_rate));
+            take.feed(recorder.len(), |from| recorder.peek(from));
+            let so_far = take.so_far();
+            let mut s = state.lock().unwrap();
+            if s.draft != so_far {
+                s.draft = so_far;
+            }
+            drop(s);
             if recorder.seconds() > MAX_TAKE_SECS {
                 recording = false;
                 ignore_up = !hands_free;

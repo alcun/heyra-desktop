@@ -85,6 +85,9 @@ pub fn transcribe_long(engine: &mut dyn Engine, sample_rate: u32, samples: &[f32
 /// and only past `AHEAD_MAX_SECS` cuts at the quietest moment it has.
 const AHEAD_MIN_SECS: f32 = 10.0;
 const OVERLAP_SECS: f32 = 1.0;
+/// Drafts while talking only while the words not yet in a piece are this short: a
+/// draft the engine is still on when the take ends is waited for.
+const DRAFT_MAX_SECS: f32 = 8.0;
 const AHEAD_MAX_SECS: f32 = 20.0;
 /// A pause: 100 ms at under this share of the take's speaking loudness.
 const PAUSE_SHARE: f32 = 0.12;
@@ -98,6 +101,13 @@ pub struct Ahead {
     /// The take's length when it was last looked at for a pause.
     looked: usize,
     pieces: Vec<Piece>,
+    /// Where each piece ends in the take.
+    ends: Vec<usize>,
+    /// The words not yet in a piece, written roughly to show while talking: the cut
+    /// they start from, how far they go, and the engine at work or the text.
+    draft: Option<(usize, usize, Piece)>,
+    /// The latest finished draft, shown until the next one is ready.
+    drafted: Option<(usize, usize, String)>,
 }
 
 /// A piece of the take: still with the engine, or written.
@@ -117,7 +127,7 @@ impl Piece {
 
 impl Ahead {
     pub fn new(engine: Shared, sample_rate: u32) -> Self {
-        Self { engine, sample_rate, cut: 0, looked: 0, pieces: Vec::new() }
+        Self { engine, sample_rate, cut: 0, looked: 0, pieces: Vec::new(), ends: Vec::new(), draft: None, drafted: None }
     }
 
     /// How much audio before a cut the next piece hears again. The engine often skips
@@ -125,6 +135,21 @@ impl Ahead {
     /// before brings them back, and the words heard twice are dropped (see `join`).
     fn overlap(&self) -> usize {
         (OVERLAP_SECS * self.sample_rate as f32) as usize
+    }
+
+    /// The audio a piece hears, given the take from up to a second before the cut: after
+    /// the first piece, from the gap between words in that second, so it doesn't begin
+    /// halfway through one. Also where that is in the take.
+    fn with_lead(&self, mut audio: Vec<f32>) -> (Vec<f32>, usize) {
+        let from = self.cut.saturating_sub(self.overlap());
+        let before = self.cut - from;
+        let latest = before.saturating_sub(self.sample_rate as usize / 2);
+        if latest == 0 {
+            return (audio, self.cut);
+        }
+        let gap = quietest(&audio, 0, latest.min(audio.len()), self.sample_rate);
+        audio.drain(..gap);
+        (audio, from + gap)
     }
 
     /// Samples already sent to the engine.
@@ -138,27 +163,78 @@ impl Ahead {
         let (min, max) = ((AHEAD_MIN_SECS * rate) as usize, (AHEAD_MAX_SECS * rate) as usize);
         // Looked at again every quarter second at most: each look copies the audio.
         let step = (rate / 4.0) as usize;
-        if len < self.cut + min || len < self.looked + step || self.pieces.last().is_some_and(|p| matches!(p, Piece::Writing(h) if !h.is_finished())) {
+        if len < self.looked + step || self.busy() {
             return;
         }
         self.looked = len;
-        // Each piece after the first hears the second before its cut again.
-        let from = self.cut.saturating_sub(self.overlap());
-        let mut chunk = peek(from);
+        let (mut chunk, from) = self.with_lead(peek(self.cut.saturating_sub(self.overlap())));
         let lead = self.cut - from;
         if chunk.len() < lead + min {
-            return;
+            return self.redraft(len, chunk, from);
         }
         let audio = &chunk[lead..];
         let end = match last_pause(audio, min - (3.0 * rate) as usize, self.sample_rate) {
             Some(end) => end,
             None if audio.len() >= max => quietest(audio, max - (5.0 * rate) as usize, max, self.sample_rate),
-            None => return,
+            None => return self.redraft(len, chunk, from),
         };
         chunk.truncate(lead + end);
         self.cut += end;
+        self.ends.push(self.cut);
         let (engine, rate) = (self.engine.clone(), self.sample_rate);
         self.pieces.push(Piece::Writing(std::thread::spawn(move || lock(&engine).transcribe(rate, &chunk))));
+    }
+
+    /// The engine is writing a piece or a draft.
+    fn busy(&self) -> bool {
+        let working = |p: &Piece| matches!(p, Piece::Writing(h) if !h.is_finished());
+        self.pieces.last().is_some_and(working) || self.draft.as_ref().is_some_and(|(_, _, p)| working(p))
+    }
+
+    /// Write the words not yet in a piece again, when there's a second more of them and
+    /// they're short enough not to keep the engine from the end of the take for long.
+    fn redraft(&mut self, len: usize, audio: Vec<f32>, from: usize) {
+        let rate = self.sample_rate as f32;
+        let second = rate as usize;
+        let fresh = len >= self.cut + second && self.draft.as_ref().is_none_or(|(_, to, _)| len >= to + second);
+        if self.busy() || !fresh || len - self.cut > (DRAFT_MAX_SECS * rate) as usize {
+            return;
+        }
+        let (engine, rate) = (self.engine.clone(), self.sample_rate);
+        self.draft = Some((from, len, Piece::Writing(std::thread::spawn(move || lock(&engine).transcribe(rate, &audio)))));
+    }
+
+    /// Everything written so far, the draft of the latest words included: for showing
+    /// while talking. Takes in what the engine has finished.
+    pub fn so_far(&mut self) -> String {
+        self.written();
+        if let Some((from, to, piece)) = &mut self.draft
+            && let Piece::Writing(h) = piece
+            && h.is_finished()
+        {
+            let Piece::Writing(handle) = std::mem::replace(piece, Piece::Written(String::new())) else { unreachable!() };
+            self.drafted = Some((*from, *to, handle.join().unwrap_or_default()));
+        }
+        let mut texts: Vec<&str> = Vec::new();
+        let mut written_to = 0;
+        for (piece, end) in self.pieces.iter().zip(&self.ends) {
+            let Piece::Written(text) = piece else { break };
+            texts.push(text);
+            written_to = *end;
+        }
+        // The draft starts a second before a cut; it's shown until a piece covers it.
+        if let Some((from, to, text)) = &self.drafted
+            && *to > written_to
+            && from + self.overlap() >= written_to
+        {
+            texts.push(text);
+        }
+        let mut out: Vec<String> = Vec::new();
+        for (i, text) in texts.iter().enumerate() {
+            out.push(if i == 0 { text.to_string() } else { join(texts[i - 1], text) });
+        }
+        out.retain(|t| !t.is_empty());
+        out.join(" ")
     }
 
     /// The text of pieces finished since the last call, in order: the take so far, for
@@ -182,9 +258,8 @@ impl Ahead {
 
     /// The take's text, given the whole clip: the pieces done so far, then the rest.
     pub fn finish(self, samples: &[f32]) -> String {
-        let from = if self.pieces.is_empty() { 0 } else { self.cut.saturating_sub(self.overlap()) };
-        let rest = samples.get(from..).unwrap_or_default();
-        let rest = transcribe_long(lock(&self.engine).as_mut(), self.sample_rate, rest);
+        let (rest, _) = self.with_lead(samples.get(self.cut.saturating_sub(self.overlap())..).unwrap_or_default().to_vec());
+        let rest = transcribe_long(lock(&self.engine).as_mut(), self.sample_rate, &rest);
         let mut texts: Vec<String> = self.pieces.into_iter().map(Piece::text).collect();
         texts.push(rest);
         let mut parts = Vec::new();
