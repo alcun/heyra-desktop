@@ -34,8 +34,8 @@ pub const DIM: u32 = 0x5b6470; // off segments, quiet text
 pub const GOLD: u32 = 0xd9a86a; // live signal
 pub const REC: u32 = 0xe0795a; // recording light
 
-pub const SANS: &str = "IBM Plex Sans";
-pub const MONO: &str = "IBM Plex Mono";
+pub const SANS: &str = "Space Grotesk";
+pub const MONO: &str = "Martian Mono";
 /// Titles and the wordmark: Outland, after the signage in the 1981 film.
 pub const DISPLAY: &str = "Outland";
 
@@ -1237,7 +1237,8 @@ impl Render for Main {
                             .pb_8()
                             .flex()
                             .items_center()
-                            .gap(px(10.))
+                            // The mark is the h: the name runs on from it.
+                            .gap(px(5.))
                             .child(mark(18.))
                             .child(
                                 div()
@@ -1247,7 +1248,7 @@ impl Render for Main {
                                     .text_color(rgb(p().ink))
                                     .whitespace_nowrap()
                                     .opacity(shown)
-                                    .child(tracked("Heyra")),
+                                    .child(tracked("eyra")),
                             ),
                     )
                     .child(self.nav("nav-home", "icons/home.svg", "HOME", Page::Home, shown, cx))
@@ -1269,7 +1270,7 @@ impl Render for Main {
                         Phase::Ready => "READY · FN",
                         Phase::Error => "CHECK HOME",
                     }).opacity(shown)))
-                    .child(label(mic).text_color(rgb(p().dim)).opacity(shown)),
+                    .child(label(short(&mic, 17)).text_color(rgb(p().dim)).whitespace_nowrap().opacity(shown)),
             );
         let toggle = div()
             .id("rail-toggle")

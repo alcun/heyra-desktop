@@ -476,11 +476,11 @@ fn main() {
     }
     app.run(move |cx: &mut App| {
         let _ = cx.text_system().add_fonts(vec![
-            Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf").as_slice()),
-            Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexSans-Medium.ttf").as_slice()),
-            Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexSans-SemiBold.ttf").as_slice()),
-            Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexMono-Regular.ttf").as_slice()),
-            Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexMono-Medium.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../assets/fonts/SpaceGrotesk-Regular.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../assets/fonts/SpaceGrotesk-Medium.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../assets/fonts/SpaceGrotesk-Bold.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../assets/fonts/MartianMono-StdRg.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../assets/fonts/MartianMono-StdMd.ttf").as_slice()),
             Cow::Borrowed(include_bytes!("../assets/fonts/Outland-Bold.otf").as_slice()),
         ]);
         if welcome {
