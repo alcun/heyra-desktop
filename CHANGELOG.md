@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.0
+
+- Parakeet v2 joins the voice models: English, best of all on meetings and calls on
+  heyra-bench, ahead of Parakeet v3 and Bark Clean word for word.
+- Voice model and Settings… in the menu bar menu.
+- Settings regrouped: push to talk, voice model, mic and open at login first, then
+  Dictation, Output and Appearance. Plain labels.
+- While dictating: do nothing, mute, or lower the volume to a fifth.
+- The orb can sit at the top, under the menu bar; the words, toasts and copy card follow it.
+- Dictionary as boxes: when I say this, write that. Tab, Enter, Esc, ⌘V; saves as you type.
+- History shows the app each take went into, the model, its length and the time to text.
+- Version and Check for updates at the bottom of the sidebar.
+- Setup: shorter, plainer steps; it asks for Accessibility once, then opens the pane,
+  and opens Home when it's done.
+- New installs start on Bark Clean even if a Parakeet copy is already on the Mac.
+- Fixed: macOS could close Heyra as idle when no window was open.
+- The engine can run Whisper, Canary, Moonshine, Qwen3-ASR, Cohere Transcribe and NeMo
+  CTC models from a folder of your own.
+
 ## 0.5.4
 
 - Labels in sentence case, in the interface's own face: no more spaced-out capitals

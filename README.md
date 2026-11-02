@@ -12,7 +12,7 @@
 brew install --cask alcun/tap/heyra
 ```
 
-**0.5 s** from letting go to text · **6.1%** of words wrong, off the cuff · **25** languages · **0 bytes** of your voice leave your Mac
+**0.5 s** from letting go to text · **5.6%** of words wrong, off the cuff · **25** languages · **0 bytes** of your voice leave your Mac
 
 Heyra runs the voice model on your own Mac. It goes online once, to download the model,
 and after that it works with Wi-Fi off. No account, no subscription, MIT licensed.
@@ -61,9 +61,11 @@ If there's nowhere to type, Heyra keeps the take on a card for you to copy.
 - Any key, combo or extra mouse button can be push-to-talk, in Settings
 - Say "press enter", "new line" or "new paragraph"; "scratch that" undoes the last take
 - In a terminal, takes don't end in a full stop
-- History keeps every take; click one to copy it
+- History keeps every take, with its app, model and timing; click one to copy it
 - The Dictionary fixes misheard words: `a cappy bar => capybara`
 - Plug in any microphone and Heyra switches to it
+- While dictating: mute or lower the Mac's sound
+- The orb can sit at the bottom or the top of the screen
 - Takes can run to 30 minutes
 
 Heyra writes while you talk, so the wait stays around half a second however long you
@@ -77,21 +79,23 @@ Everything Heyra keeps is in `~/Library/Application Support/Heyra`.
 
 ## Voice models
 
-Pick one on Home or in Settings. The current model keeps working while a new one
+Pick one in Settings or the menu bar. The current model keeps working while a new one
 downloads.
 
 | Model | Size | For | Average | Off the cuff |
 |---|--:|---|--:|--:|
-| Bark 3.0 Clean | 399&nbsp;MB | English, leaves out "um", "uh" and false starts | 9.9 | **6.1** |
-| Fluid Speech Mini | 312&nbsp;MB | English, every word | **6.6** | 17.3 |
-| Parakeet v3 | 487&nbsp;MB | English and 24 European languages | 8.1 | 17.5 |
+| Bark 3.0 Clean | 399&nbsp;MB | English, leaves out "um", "uh" and false starts | 9.3 | **5.6** |
+| Fluid Speech Mini | 312&nbsp;MB | English, every word | **6.7** | 16.8 |
+| Parakeet v2 | 460&nbsp;MB | English, meetings and calls | 7.3 | 16.2 |
+| Parakeet v3 | 487&nbsp;MB | English and 24 European languages | 8.3 | 18.0 |
 
 Words wrong in 100, fewer is better. "Off the cuff" is scored against what the speaker
 meant, so Bark Clean's average counts the "um"s it leaves out on purpose. Measured with
 [heyra-bench](https://github.com/alcun/heyra-bench) on 800 public clips; full results on
 the [Bench](https://heyra.alcun.dev/bench).
 
-Your own model: Settings → Use a model folder, with any sherpa-onnx transducer.
+Your own model: Settings → Use your own model, with a sherpa-onnx folder: Parakeet-style
+transducers, Whisper, Canary, Moonshine, Qwen3-ASR or Cohere Transcribe.
 
 Bark 3.0 Clean ([Underdog](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Clean))
 and Fluid Speech Mini ([FluidVoice](https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-onnx))
