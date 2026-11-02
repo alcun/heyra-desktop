@@ -233,6 +233,20 @@ impl OrbDriver {
     }
 }
 
+/// A menu bar app with no window open is still working: macOS mustn't close it as idle.
+#[allow(unexpected_cfgs)]
+fn keep_running() {
+    use cocoa::base::id;
+    use cocoa::foundation::NSString;
+    use objc::{class, msg_send, sel, sel_impl};
+    unsafe {
+        let info: id = msg_send![class!(NSProcessInfo), processInfo];
+        let reason = NSString::alloc(cocoa::base::nil).init_str("Heyra listens for push-to-talk");
+        let _: () = msg_send![info, disableAutomaticTermination: reason];
+        let _: () = msg_send![info, disableSuddenTermination];
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() == 2 && args[1] == "--mics" {
@@ -498,6 +512,7 @@ fn main() {
         });
     }
     app.run(move |cx: &mut App| {
+        keep_running();
         let _ = cx.text_system().add_fonts(vec![
             Cow::Borrowed(include_bytes!("../assets/fonts/SpaceGrotesk-Regular.ttf").as_slice()),
             Cow::Borrowed(include_bytes!("../assets/fonts/SpaceGrotesk-Medium.ttf").as_slice()),

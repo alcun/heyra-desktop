@@ -46,6 +46,8 @@ pub struct Onboarding {
     takes_before: usize,
     /// Only the model step, for installs from before there was a choice.
     models_only: bool,
+    /// macOS's Accessibility prompt has been shown; after that the button opens the pane.
+    asked_access: bool,
 }
 
 pub fn open(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
@@ -83,6 +85,7 @@ fn open_at(cx: &mut App, state: Shared, cmds: Sender<Cmd>, models_only: bool) {
                 frame: None,
                 takes_before: 0,
                 models_only,
+                asked_access: false,
             })
         },
     )
@@ -319,84 +322,84 @@ impl Render for Onboarding {
         let (title, words, main, other): (String, String, Option<&'static str>, Option<&'static str>) = match self.step {
             Step::Welcome => (
                 "Heyra".into(),
-                "Hold fn, talk, let go.\nYour words appear where you're typing. Nothing leaves this Mac.".into(),
-                Some("Begin"),
+                "Push-to-talk dictation. Runs on this Mac, offline.".into(),
+                Some("Set up"),
                 None,
             ),
             Step::Model if self.models_only => (
                 "New voice models".into(),
-                "Pick one, or keep yours. Change it any time in Settings.".into(),
+                "Pick one or keep yours.".into(),
                 Some("Done"),
                 None,
             ),
             Step::Model => (
-                "Pick a voice model".into(),
-                "Runs on this Mac. Change it any time.".into(),
+                "Voice model".into(),
+                "Runs locally. Change it in Settings.".into(),
                 Some("Continue"),
                 None,
             ),
             Step::Microphone => match mic {
-                Mic::Allowed => ("Say something".into(), "The orb follows your voice.".into(), Some("Continue"), None),
+                Mic::Allowed => ("Microphone".into(), "Say something. The orb follows your level.".into(), Some("Continue"), None),
                 Mic::Denied => (
-                    "Microphone is off".into(),
-                    "Turn Heyra on in Privacy & Security → Microphone.".into(),
+                    "Microphone blocked".into(),
+                    "System Settings → Privacy & Security → Microphone → Heyra.".into(),
                     Some("Open Settings"),
                     Some("Skip"),
                 ),
                 Mic::Unknown => (
                     "Microphone".into(),
-                    "Heyra only listens while you hold fn.".into(),
-                    Some("Allow microphone"),
+                    "Records only while fn is held.".into(),
+                    Some("Allow"),
                     None,
                 ),
             },
             Step::Access => (
                 "Accessibility".into(),
-                "So Heyra can hear fn and type for you.\nTurn Heyra on in the list that opens.".into(),
+                "Needed to read fn and paste text.\nPrivacy & Security → Accessibility → Heyra.".into(),
                 Some("Open Settings"),
                 Some("Skip"),
             ),
             Step::FnKey => (
-                "The fn key".into(),
-                "Keyboard → Press 🌐 key to → Do Nothing,\nso fn doesn't also open emoji.".into(),
+                "fn key".into(),
+                "Keyboard → Press 🌐 key to → Do Nothing.\nOtherwise fn also opens the emoji picker.".into(),
                 Some("Open Keyboard Settings"),
                 Some("Skip"),
             ),
-            Step::Try if tried => (String::new(), "That's Heyra.".into(), Some("Continue"), None),
+            Step::Try if tried => (String::new(), "Working.".into(), Some("Continue"), None),
             Step::Try if failed => (
-                "Couldn't download".into(),
+                "Download failed".into(),
                 failure.clone().unwrap_or_default(),
-                Some("Try again"),
+                Some("Retry"),
                 Some("Choose another"),
             ),
             Step::Try if loading && retry.is_some() => (
-                "Almost ready".into(),
-                format!("{}\nTrying again in {} s.", retry.as_ref().map(|(w, _)| w.as_str()).unwrap_or(""), retry_in.unwrap_or(1)),
+                "Downloading".into(),
+                format!("{}\nRetrying in {} s.", retry.as_ref().map(|(w, _)| w.as_str()).unwrap_or(""), retry_in.unwrap_or(1)),
                 None,
                 Some("Done"),
             ),
             Step::Try if loading => (
-                "Almost ready".into(),
+                "Downloading".into(),
                 match progress {
-                    Some(p) if p >= 0.999 => "Setting up the voice model…".into(),
-                    Some(p) => format!("Downloading the voice model, once · {}%", (p * 100.) as u32),
-                    None => "Downloading the voice model, once".into(),
+                    Some(p) if p >= 0.999 => "Loading the voice model…".into(),
+                    Some(p) => format!("Voice model · {}%", (p * 100.) as u32),
+                    None => "Voice model".into(),
                 },
                 None,
                 Some("Done"),
             ),
-            Step::Try => ("Try it".into(), "Hold fn and say something.\nLet go when you're done.".into(), None, Some("Skip")),
+            Step::Try => ("Test".into(), "Hold fn, speak, release.".into(), None, Some("Skip")),
             Step::Ready => (
-                "You're ready".into(),
-                "Click into any text box, hold fn and talk.\nDouble-tap fn for hands-free.".into(),
+                "Ready".into(),
+                "Hold fn in any text field.\nDouble-tap fn: hands-free. Esc: cancel.".into(),
                 Some("Continue"),
                 None,
             ),
             Step::Keep => (
-                "Everything stays here".into(),
-                "Every take is saved in History, on this Mac.\nChange the key any time in Settings.\nHeyra lives in the dot at the bottom of your screen.".into(),
-                Some("Start"),
-                Some("Open Heyra"),
+                "Done".into(),
+                "Takes are saved in History, on this Mac.\nKey, model, mic: Settings.\nHeyra runs from the menu bar.".into(),
+                Some("Done"),
+                None,
             ),
         };
 
@@ -427,9 +430,12 @@ impl Render for Onboarding {
                         });
                     }
                 },
-                Step::Access => {
+                // macOS's own prompt once (it adds Heyra to the list); then the pane.
+                Step::Access if !this.asked_access => {
+                    this.asked_access = true;
                     crate::hotkey::trusted(true);
                 }
+                Step::Access => setup::open_settings(setup::PANE_ACCESSIBILITY),
                 Step::FnKey => setup::open_settings(setup::PANE_KEYBOARD),
                 // Resume the download that failed.
                 Step::Try if failed_now => {
@@ -443,6 +449,7 @@ impl Render for Onboarding {
                     this.state.lock().unwrap().toast =
                         Some(("Ready".into(), "Hold fn anywhere".into(), Instant::now()));
                     window.remove_window();
+                    crate::ui::open_main(cx, this.state.clone(), this.cmds.clone());
                 }
             }
             cx.notify();
