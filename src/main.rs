@@ -25,7 +25,9 @@ use std::borrow::Cow;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use gpui::{App, Application};
+use gpui::{actions, App, Application, KeyBinding};
+
+actions!(heyra, [Quit, CloseWindow]);
 
 use engine::Transducer;
 use worker::{Cmd, Phase};
@@ -513,6 +515,14 @@ fn main() {
     }
     app.run(move |cx: &mut App| {
         keep_running();
+        // A menu bar app has no menus, so the usual keys are bound here.
+        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None), KeyBinding::new("cmd-w", CloseWindow, None)]);
+        cx.on_action(|_: &Quit, cx| cx.quit());
+        cx.on_action(|_: &CloseWindow, cx| {
+            if let Some(w) = cx.active_window() {
+                let _ = w.update(cx, |_, window, _| window.remove_window());
+            }
+        });
         let _ = cx.text_system().add_fonts(vec![
             Cow::Borrowed(include_bytes!("../assets/fonts/SpaceGrotesk-Regular.ttf").as_slice()),
             Cow::Borrowed(include_bytes!("../assets/fonts/SpaceGrotesk-Medium.ttf").as_slice()),
