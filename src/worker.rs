@@ -229,7 +229,7 @@ pub static KEEP_MIC_READY: AtomicBool = AtomicBool::new(true);
 
 /// The Settings switch for muting the Mac while a take records.
 pub static MUTE_WHILE_TALKING: AtomicBool = AtomicBool::new(false);
-/// While a take records: 0 leave the sound, 1 mute it, 2 turn it down to a fifth.
+/// While a take records: 0 leave the sound, 1 mute it, 2 turn it down to a third.
 pub static WHILE_TALKING: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 pub fn while_talking_from(settings: &store::Settings) -> u8 {
@@ -286,7 +286,7 @@ impl Mute {
             // Only remembered if it was really turned down, so only that is put back.
             if let Some(v) = crate::mics::output_volume() {
                 let _ = std::fs::write(sound_note(), v.to_string());
-                self.was_volume = crate::mics::set_output_volume(v * 0.2).then_some(v);
+                self.was_volume = crate::mics::set_output_volume(v / 3.0).then_some(v);
             }
         } else {
             let _ = std::fs::write(sound_note(), "muted");

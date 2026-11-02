@@ -7,7 +7,7 @@
 - Voice model and Settings… in the menu bar menu.
 - Settings regrouped: push to talk, voice model, mic and open at login first, then
   Dictation, Output and Appearance. Plain labels.
-- While dictating: do nothing, mute, or lower the volume to a fifth.
+- While dictating: do nothing, mute, or lower the volume to a third.
 - The orb can sit at the top, under the menu bar; the words, toasts and copy card follow it.
 - Dictionary as boxes: when I say this, write that. Tab, Enter, Esc, ⌘V; saves as you type.
 - History shows the app each take went into, the model, its length and the time to text.
