@@ -57,7 +57,20 @@ pub const FLUID: Model = Model {
     sources: &["https://github.com/alcun/heyra-desktop/releases/download/model-fluid-speech-mini/fluidvoice-fluid-speech-mini.tar.bz2"],
 };
 
-pub const ALL: [&Model; 3] = [&BARK_CLEAN, &FLUID, &PARAKEET];
+pub const PARAKEET_V2: Model = Model {
+    id: "parakeet-v2",
+    name: "Parakeet v2",
+    note: "English, meetings and calls",
+    dir: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
+    mb: 460,
+    sha256: "157c157bc51155e03e37d2466522a3a737dd9c72bb25f36eb18912964161e1ad",
+    sources: &["https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2"],
+};
+
+pub const ALL: [&Model; 4] = [&BARK_CLEAN, &FLUID, &PARAKEET_V2, &PARAKEET];
+
+/// The three the welcome window offers, one for each kind of need; the rest are in Settings.
+pub const WELCOME: [&Model; 3] = [&BARK_CLEAN, &FLUID, &PARAKEET];
 
 /// The model a new install starts with: Bark Clean on a Mac set to English,
 /// Parakeet (which finds the language itself) on any other.

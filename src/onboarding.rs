@@ -198,7 +198,7 @@ impl Onboarding {
             let s = self.state.lock().unwrap();
             s.switching.clone().unwrap_or_else(|| s.model.clone())
         };
-        let tiles = crate::model::ALL.iter().enumerate().map(|(i, m)| {
+        let tiles = crate::model::WELCOME.iter().enumerate().map(|(i, m)| {
             let selected = chosen == Choice::Listed(m.id);
             let picked_for_you = m.id == crate::model::default().id;
             let cmds = self.cmds.clone();
