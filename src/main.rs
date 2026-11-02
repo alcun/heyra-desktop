@@ -766,6 +766,8 @@ fn main() {
                         }
                         Some(tray::Action::UseModel(id)) => {
                             let _ = main_tx.send(Cmd::UseModel(model::Choice::Listed(id)));
+                            // A click toggles the item's own tick: put the ticks right again.
+                            shown_model = None;
                         }
                         Some(tray::Action::Quit) => cx.quit(),
                         None => {}

@@ -64,7 +64,10 @@ pub const PARAKEET_V2: Model = Model {
     dir: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
     mb: 460,
     sha256: "157c157bc51155e03e37d2466522a3a737dd9c72bb25f36eb18912964161e1ad",
-    sources: &["https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2"],
+    sources: &[
+        "https://github.com/alcun/heyra-desktop/releases/download/model-parakeet-v2/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
+    ],
 };
 
 pub const ALL: [&Model; 4] = [&BARK_CLEAN, &FLUID, &PARAKEET_V2, &PARAKEET];

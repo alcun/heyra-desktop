@@ -100,10 +100,14 @@ pub fn load_dictionary() -> Vec<(String, String)> {
 
 /// Write the rules back, keeping the file's explanation at the top.
 pub fn save_dictionary(rules: &[(String, String)]) {
-    let mut text = String::from(
-        "# Heyra dictionary: one rule per line, \"what it hears => what you meant\".\n\
-         # Matching ignores case. Lines starting with # are ignored.\n",
-    );
+    // Keep every comment already in the file, in order, above the rules.
+    let comments: Vec<String> = fs::read_to_string(dictionary_path())
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| l.trim_start().starts_with('#'))
+        .map(str::to_string)
+        .collect();
+    let mut text = comments.iter().map(|l| format!("{l}\n")).collect::<String>();
     for (heard, meant) in rules.iter().filter(|(h, _)| !h.trim().is_empty()) {
         text.push_str(&format!("{} => {}\n", heard.trim(), meant.trim()));
     }

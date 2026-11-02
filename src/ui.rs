@@ -1304,6 +1304,13 @@ impl Main {
                         this.dict = None;
                         this.slow.dictionary = store::load_dictionary();
                     }
+                    "v" if event.keystroke.modifiers.platform => {
+                        if let Ok(text) = arboard::Clipboard::new().and_then(|mut c| c.get_text()) {
+                            let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                            d.cell().push_str(&line);
+                            d.keep_blank();
+                        }
+                    }
                     _ => {
                         if event.keystroke.modifiers.platform || event.keystroke.modifiers.control {
                             return;

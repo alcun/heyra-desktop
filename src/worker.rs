@@ -249,6 +249,8 @@ struct Mute {
     was_muted: bool,
     /// Turned down rather than muted: the volume to put back.
     was_volume: Option<f32>,
+    /// This take muted it, so unmuting is ours to do.
+    muted: bool,
 }
 
 impl Mute {
@@ -258,12 +260,11 @@ impl Mute {
         }
         self.on = true;
         if mode == 2 {
-            self.was_volume = crate::mics::output_volume();
-            if let Some(v) = self.was_volume {
-                crate::mics::set_output_volume(v * 0.2);
-            }
-        } else {
-            self.was_muted = crate::mics::mute_output(true).unwrap_or(true);
+            // Only remembered if it was really turned down, so only that is put back.
+            self.was_volume = crate::mics::output_volume().filter(|v| crate::mics::set_output_volume(v * 0.2));
+        } else if let Some(was) = crate::mics::mute_output(true) {
+            self.was_muted = was;
+            self.muted = !was;
         }
     }
 
@@ -273,7 +274,8 @@ impl Mute {
         }
         if let Some(v) = self.was_volume.take() {
             crate::mics::set_output_volume(v);
-        } else if !self.was_muted {
+        }
+        if std::mem::take(&mut self.muted) {
             crate::mics::mute_output(false);
         }
     }
