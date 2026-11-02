@@ -6,6 +6,7 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 pub struct Tray {
     _icon: TrayIcon,
     open: MenuItem,
+    settings: MenuItem,
     paste_last: MenuItem,
     /// Voice model: one tick per listed model.
     models: Vec<(&'static str, CheckMenuItem)>,
@@ -14,6 +15,7 @@ pub struct Tray {
 
 pub enum Action {
     Open,
+    Settings,
     PasteLast,
     UseModel(&'static str),
     Quit,
@@ -46,6 +48,7 @@ fn mark() -> Icon {
 impl Tray {
     pub fn new() -> Option<Self> {
         let open = MenuItem::new("Open Heyra", true, None);
+        let settings = MenuItem::new("Settings…", true, None);
         let paste_last = MenuItem::new("Paste last take", true, None);
         let quit = MenuItem::new("Quit Heyra", true, None);
         let voice = Submenu::new("Voice model", true);
@@ -55,20 +58,22 @@ impl Tray {
             voice.append(item).ok()?;
         }
         let menu = Menu::new();
-        menu.append_items(&[&open, &paste_last, &voice, &PredefinedMenuItem::separator(), &quit]).ok()?;
+        menu.append_items(&[&open, &paste_last, &voice, &settings, &PredefinedMenuItem::separator(), &quit]).ok()?;
         let icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_icon_templated(mark())
             .with_tooltip("Heyra: hold fn and talk")
             .build()
             .ok()?;
-        Some(Self { _icon: icon, open, paste_last, models, quit })
+        Some(Self { _icon: icon, open, settings, paste_last, models, quit })
     }
 
     pub fn poll(&self) -> Option<Action> {
         let event = MenuEvent::receiver().try_recv().ok()?;
         if event.id == *self.open.id() {
             Some(Action::Open)
+        } else if event.id == *self.settings.id() {
+            Some(Action::Settings)
         } else if event.id == *self.paste_last.id() {
             Some(Action::PasteLast)
         } else if event.id == *self.quit.id() {

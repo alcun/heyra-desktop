@@ -1425,7 +1425,10 @@ impl Main {
         let recording = crate::hotkey::recording();
         let chosen = crate::hotkey::button();
         // One row: fn always works; another key or mouse button can work too.
-        let key_text = if recording {
+        let tap_ok = self.state.lock().unwrap().checks.accessibility;
+        let key_text = if recording && !tap_ok {
+            "Allow Accessibility first".to_string()
+        } else if recording {
             "Press a key or mouse button…".to_string()
         } else {
             chosen.map_or("fn".into(), |b| format!("fn or {}", crate::hotkey::name(b)))

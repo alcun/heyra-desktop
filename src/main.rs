@@ -697,6 +697,10 @@ fn main() {
                             }
                             cx.activate(true);
                         }
+                        Some(tray::Action::Settings) => {
+                            ui::open_settings(cx, main_state.clone(), main_tx.clone());
+                            cx.activate(true);
+                        }
                         Some(tray::Action::PasteLast) => {
                             let last = main_state.lock().unwrap().history.last().map(|e| e.text.clone());
                             if let Some(text) = last {
