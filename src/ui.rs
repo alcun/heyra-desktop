@@ -1410,13 +1410,14 @@ impl Main {
         // Push to talk.
         let recording = crate::hotkey::recording();
         let chosen = crate::hotkey::button();
+        // One row: fn always works; another key or mouse button can work too.
         let key_text = if recording {
             "Press a key or mouse button…".to_string()
         } else {
-            chosen.map_or("none".into(), |b| crate::hotkey::name(b))
+            chosen.map_or("fn".into(), |b| format!("fn or {}", crate::hotkey::name(b)))
         };
-        let key_row = row("another-key")
-            .child(div().flex_1().text_size(px(15.)).text_color(rgb(p().ink)).child("Another key"))
+        let key_row = row("push-to-talk")
+            .child(div().flex_1().text_size(px(15.)).text_color(rgb(p().ink)).child("Push to talk"))
             .child(div().text_size(px(15.)).text_color(rgb(if recording { p().gold } else { p().slate })).child(key_text))
             .when(chosen.is_some() && !recording, |d| {
                 d.child(button("clear", "Clear").on_click(|_, _, _| {
@@ -1425,7 +1426,9 @@ impl Main {
                     store::save_settings(&store::Settings { button: None, ..settings });
                 }))
             })
-            .child(button("choose", "Choose").on_click(|_, _, _| crate::hotkey::record(true)));
+            .when(!recording, |d| {
+                d.child(button("choose", if chosen.is_some() { "Change" } else { "Add a key" }).on_click(|_, _, _| crate::hotkey::record(true)))
+            });
         let talk_footer = if fn_free {
             "Double-tap for hands-free. Esc cancels."
         } else {
@@ -1437,7 +1440,6 @@ impl Main {
         let main = group(
             None,
             vec![
-                ink_row("hold", "Hold fn, talk, let go".into()).child(label("fn")).into_any_element(),
                 key_row.into_any_element(),
                 self.dropdown("model", "Voice model", current_model, model_status, model_items, cx),
                 self.dropdown("mic", "Microphone", current_mic, None, rows, cx),
