@@ -41,6 +41,11 @@ pub struct Entry {
     /// Seconds from release to text.
     #[serde(default)]
     pub took: f32,
+    /// The app it went into, and the model that wrote it (takes from 0.5.5 on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 impl Entry {

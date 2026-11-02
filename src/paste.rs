@@ -114,6 +114,25 @@ pub fn in_terminal() -> bool {
     frontmost_bundle().is_some_and(|name| TERMINALS.contains(&name.as_str()))
 }
 
+/// The name of the app in front, as macOS shows it.
+pub fn frontmost_name() -> Option<String> {
+    use cocoa::base::{id, nil};
+    use objc::{class, msg_send, sel, sel_impl};
+    unsafe {
+        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let app: id = msg_send![workspace, frontmostApplication];
+        if app == nil {
+            return None;
+        }
+        let name: id = msg_send![app, localizedName];
+        if name == nil {
+            return None;
+        }
+        let utf8: *const std::ffi::c_char = msg_send![name, UTF8String];
+        Some(std::ffi::CStr::from_ptr(utf8).to_string_lossy().into_owned())
+    }
+}
+
 /// The bundle id of the app in front.
 fn frontmost_bundle() -> Option<String> {
     use cocoa::base::{id, nil};

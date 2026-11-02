@@ -315,7 +315,9 @@ fn finish(state: &Shared, engine: &crate::engine::Shared, ahead: Option<Ahead>, 
                 Err(e) => store::log(&format!("paste failed: {e}")),
             }
         }
-        let entry = Entry { at: store::now(), text, secs, took };
+        let app = crate::paste::frontmost_name().filter(|_| paste);
+        let model = Some(state.lock().unwrap().model.name());
+        let entry = Entry { at: store::now(), text, secs, took, app, model };
         store::append_history(&entry);
         state.lock().unwrap().history.push(entry);
     }

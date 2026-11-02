@@ -439,7 +439,18 @@ fn take(index: usize, entry: &store::Entry, copied: bool, full: bool, lit: bool,
                 .line_height(px(23.))
                 .text_color(rgb(p().ink))
                 .when(!full, |d| d.line_clamp(3))
-                .child(entry.text.clone()),
+                .child(entry.text.clone())
+                // On History: where it went, which model, how long it was, how long it took.
+                .when(full, |d| {
+                    let mut parts: Vec<String> = Vec::new();
+                    parts.extend(entry.app.clone());
+                    parts.extend(entry.model.clone());
+                    parts.push(format!("{:.1} s audio", entry.secs));
+                    if entry.took > 0.0 {
+                        parts.push(format!("{:.2} s to text", entry.took));
+                    }
+                    d.child(div().pt(px(6.)).child(label(parts.join(" · ")).text_color(rgb(p().dim))))
+                }),
         )
         // When, and how long, on the right.
         .child(
@@ -1393,7 +1404,10 @@ impl Main {
                 Some(("Keyboard", setup::PANE_KEYBOARD)),
             ))
             .child(step("s-take", steps[4].0, steps[4].1, "Hold fn in any text box and talk.".into(), None));
-        (done < steps.len()).then_some(setup_list)
+        // In a card, like the groups on Settings.
+        (done < steps.len()).then(|| {
+            div().px(px(18.)).pt(px(16.)).pb(px(6.)).rounded(px(14.)).bg(rgb(p().panel)).border_1().border_color(rgb(p().hair)).child(setup_list)
+        })
     }
 
     fn settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1436,12 +1450,10 @@ impl Main {
         };
         // The things people change, in one card at the top: how to talk, which model,
         // which mic, and opening at login.
-        let (current_model, model_status, model_items) = self.model_menu();
         let main = group(
             None,
             vec![
                 key_row.into_any_element(),
-                self.dropdown("model", "Voice model", current_model, model_status, model_items, cx),
                 self.dropdown("mic", "Microphone", current_mic, None, rows, cx),
                 switch("login", "Open at login", self.slow.login, crate::login::set),
             ],
@@ -1543,10 +1555,10 @@ impl Main {
             .pb(px(24.))
             .child(title("Settings"))
             .child(main)
+            .child(self.models(cx))
             .child(dictation)
             .child(output)
             .children(fx)
-            .child(self.models(cx))
             .child(appearance)
     }
 
