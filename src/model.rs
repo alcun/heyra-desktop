@@ -115,7 +115,8 @@ impl Choice {
         match (settings.model.as_deref(), settings.model_folder) {
             (Some("folder"), Some(dir)) => Choice::Folder(dir),
             (Some(id), _) if by_id(id).is_some() => Choice::Listed(by_id(id).unwrap().id),
-            (None, _) if settings.onboarded || PARAKEET.find().is_some() => Choice::Listed(PARAKEET.id),
+            // Set up before there was a choice: they had Parakeet. A new install gets the default.
+            (None, _) if settings.onboarded => Choice::Listed(PARAKEET.id),
             _ => Choice::Listed(default().id),
         }
     }
@@ -199,6 +200,8 @@ pub fn files(dir: &Path) -> Result<Files, String> {
     let names: Vec<String> = fs::read_dir(dir)
         .map_err(|e| format!("couldn't open {}: {e}", dir.display()))?
         .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        // Skip macOS's ._ metadata files, which some archives carry beside the real ones.
+        .filter(|n| !n.starts_with('.'))
         .collect();
     let pick = |part: &str| -> Result<PathBuf, String> {
         let mut found: Vec<&String> = names.iter().filter(|n| n.contains(part) && n.ends_with(".onnx")).collect();
