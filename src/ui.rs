@@ -724,6 +724,8 @@ impl Main {
     fn menu_panel(&self, id: &'static str, items: Vec<AnyElement>, anchor: gpui::Corner, cx: &Context<Self>) -> impl IntoElement {
         let panel = div()
             .id(ElementId::Name(format!("menu-{id}").into()))
+            // Clicks on the menu stop here, not on the rows under it.
+            .occlude()
             .w(px(420.))
             .max_h(px(380.))
             .overflow_y_scroll()
