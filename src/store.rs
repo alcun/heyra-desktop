@@ -93,6 +93,18 @@ pub fn load_dictionary() -> Vec<(String, String)> {
         .collect()
 }
 
+/// Write the rules back, keeping the file's explanation at the top.
+pub fn save_dictionary(rules: &[(String, String)]) {
+    let mut text = String::from(
+        "# Heyra dictionary: one rule per line, \"what it hears => what you meant\".\n\
+         # Matching ignores case. Lines starting with # are ignored.\n",
+    );
+    for (heard, meant) in rules.iter().filter(|(h, _)| !h.trim().is_empty()) {
+        text.push_str(&format!("{} => {}\n", heard.trim(), meant.trim()));
+    }
+    let _ = fs::write(dictionary_path(), text);
+}
+
 /// Case-insensitive replace of whole phrases.
 /// The take is just "scratch that": undo the last one.
 pub fn is_scratch_that(text: &str) -> bool {

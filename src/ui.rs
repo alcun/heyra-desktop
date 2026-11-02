@@ -465,9 +465,9 @@ fn take(index: usize, entry: &store::Entry, copied: bool, full: bool, lit: bool,
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
     Home,
+    Settings,
     History,
     Dictionary,
-    Settings,
 }
 
 pub struct Main {
@@ -503,6 +503,35 @@ pub struct Main {
     rail_from: f32,
     /// History, newest first: only the rows on screen are laid out.
     takes: gpui::ListState,
+    /// Typing goes to the dictionary's boxes while one is being edited.
+    focus: gpui::FocusHandle,
+    dict: Option<DictEdit>,
+}
+
+/// The dictionary while it's being edited: every rule, a blank one at the end for
+/// the next, and the box the typing goes into (rule, and 0 for "when I say", 1 for "write").
+struct DictEdit {
+    rows: Vec<(String, String)>,
+    at: (usize, usize),
+}
+
+impl DictEdit {
+    fn cell(&mut self) -> &mut String {
+        let (i, side) = self.at;
+        let row = &mut self.rows[i];
+        if side == 0 { &mut row.0 } else { &mut row.1 }
+    }
+
+    /// Always one blank rule at the end to type the next into.
+    fn keep_blank(&mut self) {
+        if self.rows.last().is_none_or(|(h, m)| !h.is_empty() || !m.is_empty()) {
+            self.rows.push((String::new(), String::new()));
+        }
+    }
+
+    fn save(&self) {
+        store::save_dictionary(&self.rows);
+    }
 }
 
 /// Answers that cost a system call or a disk read: fetched once a second and after
@@ -608,6 +637,8 @@ pub fn open_main(cx: &mut App, state: Shared, cmds: Sender<Cmd>) {
                     orb_drawn: Instant::now(),
                     orb_drifting: false,
                     takes: gpui::ListState::new(0, gpui::ListAlignment::Top, px(600.)),
+                    focus: cx.focus_handle(),
+                    dict: None,
                 }
             })
         },
@@ -924,9 +955,6 @@ impl Main {
         }
         let count = s.history.len();
         let level = s.level;
-        let progress = s.progress;
-        let checks = s.checks;
-        let model_ready = matches!(s.phase, Phase::Ready | Phase::Listening | Phase::Transcribing);
         drop(s);
 
         let frame = self.orb_frame(window, phase, level);
@@ -1057,6 +1085,243 @@ impl Main {
             );
         let strip = div().flex().flex_col().gap_4().child(words_card).child(small);
 
+
+        let me = cx.entity().downgrade();
+        let recent: Vec<AnyElement> = {
+            let s = self.state.lock().unwrap();
+            (0..count).rev().take(6).map(|i| take(i, &s.history[i], self.copied == Some(i), false, self.hovered.as_ref().map(|h| h.as_ref()) == Some(format!("take-{i}").as_str()), me.clone())).collect()
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap_10()
+            .child(title("Home"))
+            .children(self.setup(cx))
+            .child(deck)
+            .child(strip)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(if recent.is_empty() {
+                        group(Some("Recent"), vec![row("none").child(hint("Hold fn anywhere and talk.")).into_any_element()], None)
+                    } else {
+                        group(Some("Recent"), recent, None)
+                    }),
+            )
+    }
+
+    fn history(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let count = self.state.lock().unwrap().history.len();
+        // New takes arrive at the top; keep the rows already measured.
+        let known = self.takes.item_count();
+        if count > known {
+            self.takes.splice(0..0, count - known);
+        } else if count < known {
+            self.takes.reset(count);
+        }
+        let (state, copied, me, hovered) = (self.state.clone(), self.copied, cx.entity().downgrade(), self.hovered.clone());
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .gap_6()
+            .child(title("History"))
+            .child(hint("Click one to copy it."))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .mb(px(28.))
+                    .p(px(6.))
+                    .rounded(px(14.))
+                    .bg(rgb(p().panel))
+                    .border_1()
+                    .border_color(rgb(p().hair))
+                    .overflow_hidden()
+                    .child(
+                        gpui::list(self.takes.clone(), move |n, _, _| {
+                            let s = state.lock().unwrap();
+                            let i = s.history.len().saturating_sub(n + 1);
+                            let Some(entry) = s.history.get(i) else { return div().into_any_element() };
+                            // List items don't stretch by themselves: full width, so times line up.
+                            div()
+                                .w_full()
+                                .flex()
+                                .flex_col()
+                                .when(n > 0, |d| d.child(divider()))
+                                .child(take(i, entry, copied == Some(i), true, hovered.as_ref().map(|h| h.as_ref()) == Some(format!("take-{i}").as_str()), me.clone()))
+                                .into_any_element()
+                        })
+                        .size_full(),
+                    ),
+            )
+    }
+
+    /// The dictionary as boxes: when I say this, write that. Click a box to type; Tab
+    /// moves on, Enter saves and starts the next rule, Esc saves and stops.
+    fn dictionary(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let editing = self.dict.as_ref().map(|d| d.at);
+        let rows: Vec<(String, String)> = match &self.dict {
+            Some(d) => d.rows.clone(),
+            None => {
+                let mut r = self.slow.dictionary.clone();
+                r.push((String::new(), String::new()));
+                r
+            }
+        };
+        if editing.is_some() && !self.focus.is_focused(window) {
+            window.focus(&self.focus);
+        }
+        let count = rows.len();
+        let cell = |i: usize, side: usize, text: String, cx: &mut Context<Self>| {
+            let on = editing == Some((i, side));
+            let blank = text.is_empty();
+            let placeholder = if side == 0 { "When I say" } else { "Write" };
+            div()
+                .id(("dict-cell", i * 2 + side))
+                .flex_1()
+                .min_w_0()
+                .h(px(34.))
+                .px(px(10.))
+                .flex()
+                .items_center()
+                .rounded(px(8.))
+                .border_1()
+                .border_color(if on { alpha(p().gold, 0.7) } else { rgb(p().hair).into() })
+                .bg(alpha(p().ink, if on { 0.05 } else { 0.02 }))
+                .cursor_text()
+                .font_family(MONO)
+                .text_sm()
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if this.dict.is_none() {
+                        let mut rows = this.slow.dictionary.clone();
+                        rows.push((String::new(), String::new()));
+                        this.dict = Some(DictEdit { rows, at: (i, side) });
+                    } else if let Some(d) = &mut this.dict {
+                        d.at = (i, side);
+                    }
+                    window.focus(&this.focus);
+                    cx.notify();
+                }))
+                .child(if blank && !on {
+                    div().text_color(rgb(p().dim)).child(placeholder)
+                } else {
+                    div().text_color(rgb(if side == 0 { p().slate } else { p().ink })).child(text)
+                })
+                .when(on, |d| d.child(div().ml(px(1.)).w(px(1.5)).h(px(16.)).bg(rgb(p().gold))))
+                .into_any_element()
+        };
+        let mut items: Vec<AnyElement> = Vec::new();
+        items.push(
+            row("dict-head")
+                .child(div().flex_1().child(label("When I say")))
+                .child(div().w(px(18.)))
+                .child(div().flex_1().child(label("Write")))
+                .child(div().w(px(26.)))
+                .into_any_element(),
+        );
+        for (i, (heard, meant)) in rows.into_iter().enumerate() {
+            let last = i + 1 == count;
+            let remove = (!last).then(|| {
+                div()
+                    .id(("dict-remove", i))
+                    .w(px(26.))
+                    .h(px(26.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(6.))
+                    .cursor_pointer()
+                    .text_color(rgb(p().dim))
+                    .hover(|d| d.bg(alpha(p().ink, 0.06)).text_color(rgb(p().ink)))
+                    .child("×")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let mut rows = match this.dict.take() {
+                            Some(d) => d.rows,
+                            None => this.slow.dictionary.clone(),
+                        };
+                        if i < rows.len() {
+                            rows.remove(i);
+                        }
+                        store::save_dictionary(&rows);
+                        this.slow.dictionary = store::load_dictionary();
+                        cx.notify();
+                    }))
+            });
+            items.push(
+                row(("rule", i))
+                    .gap_2()
+                    .child(cell(i, 0, heard, cx))
+                    .child(div().w(px(18.)).flex().justify_center().text_color(rgb(p().dim)).child("→"))
+                    .child(cell(i, 1, meant, cx))
+                    .child(match remove {
+                        Some(r) => r.into_any_element(),
+                        None => div().w(px(26.)).into_any_element(),
+                    })
+                    .into_any_element(),
+            );
+        }
+        div()
+            .id("dictionary")
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                let Some(d) = &mut this.dict else { return };
+                let key = event.keystroke.key.as_str();
+                let shift = event.keystroke.modifiers.shift;
+                match key {
+                    "backspace" => {
+                        d.cell().pop();
+                    }
+                    "tab" => {
+                        let (i, side) = d.at;
+                        d.at = if shift {
+                            if side == 1 { (i, 0) } else { (i.saturating_sub(1), if i == 0 { 0 } else { 1 }) }
+                        } else if side == 0 {
+                            (i, 1)
+                        } else {
+                            ((i + 1).min(d.rows.len() - 1), 0)
+                        };
+                    }
+                    "enter" => {
+                        d.keep_blank();
+                        d.save();
+                        d.at = (d.rows.len() - 1, 0);
+                    }
+                    "escape" => {
+                        d.save();
+                        this.dict = None;
+                        this.slow.dictionary = store::load_dictionary();
+                    }
+                    _ => {
+                        if event.keystroke.modifiers.platform || event.keystroke.modifiers.control {
+                            return;
+                        }
+                        if let Some(text) = &event.keystroke.key_char {
+                            d.cell().push_str(text);
+                            d.keep_blank();
+                        }
+                    }
+                }
+                if let Some(d) = &this.dict {
+                    d.save();
+                }
+                cx.stop_propagation();
+                cx.notify();
+            }))
+            .flex()
+            .flex_col()
+            .gap_6()
+            .child(title("Dictionary"))
+            .child(group(None, items, Some("Heyra writes the right-hand words whenever it hears the left. Case doesn't matter.".into())))
+    }
+
+    /// First-run setup, on General until every step is done.
+    fn setup(&self, _cx: &mut Context<Self>) -> Option<Div> {
+        let (model_ready, progress, checks, count) = {
+            let s = self.state.lock().unwrap();
+            (matches!(s.phase, Phase::Ready | Phase::Listening | Phase::Transcribing), s.progress, s.checks, s.history.len())
+        };
         // First-run setup: each step ticks itself off as macOS reports it done.
         let step = |id: &'static str, done: bool, name: &'static str, detail: String, action: Option<(&'static str, &'static str)>| {
             div()
@@ -1128,115 +1393,7 @@ impl Main {
                 Some(("Keyboard", setup::PANE_KEYBOARD)),
             ))
             .child(step("s-take", steps[4].0, steps[4].1, "Hold fn in any text box and talk.".into(), None));
-        let setup_done = done == steps.len();
-
-        let me = cx.entity().downgrade();
-        let recent: Vec<AnyElement> = {
-            let s = self.state.lock().unwrap();
-            (0..count).rev().take(6).map(|i| take(i, &s.history[i], self.copied == Some(i), false, self.hovered.as_ref().map(|h| h.as_ref()) == Some(format!("take-{i}").as_str()), me.clone())).collect()
-        };
-        div()
-            .flex()
-            .flex_col()
-            .gap_10()
-            .child(title("Home"))
-            .child(deck)
-            .when(!setup_done, |d| d.child(setup_list))
-            .child(strip)
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .child(if recent.is_empty() {
-                        group(Some("Recent"), vec![row("none").child(hint("Hold fn anywhere and talk.")).into_any_element()], None)
-                    } else {
-                        group(Some("Recent"), recent, None)
-                    }),
-            )
-    }
-
-    fn history(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let count = self.state.lock().unwrap().history.len();
-        // New takes arrive at the top; keep the rows already measured.
-        let known = self.takes.item_count();
-        if count > known {
-            self.takes.splice(0..0, count - known);
-        } else if count < known {
-            self.takes.reset(count);
-        }
-        let (state, copied, me, hovered) = (self.state.clone(), self.copied, cx.entity().downgrade(), self.hovered.clone());
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .gap_6()
-            .child(title("History"))
-            .child(hint("Click one to copy it."))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .mb(px(28.))
-                    .p(px(6.))
-                    .rounded(px(14.))
-                    .bg(rgb(p().panel))
-                    .border_1()
-                    .border_color(rgb(p().hair))
-                    .overflow_hidden()
-                    .child(
-                        gpui::list(self.takes.clone(), move |n, _, _| {
-                            let s = state.lock().unwrap();
-                            let i = s.history.len().saturating_sub(n + 1);
-                            let Some(entry) = s.history.get(i) else { return div().into_any_element() };
-                            // List items don't stretch by themselves: full width, so times line up.
-                            div()
-                                .w_full()
-                                .flex()
-                                .flex_col()
-                                .when(n > 0, |d| d.child(divider()))
-                                .child(take(i, entry, copied == Some(i), true, hovered.as_ref().map(|h| h.as_ref()) == Some(format!("take-{i}").as_str()), me.clone()))
-                                .into_any_element()
-                        })
-                        .size_full(),
-                    ),
-            )
-    }
-
-    fn dictionary(&self) -> impl IntoElement {
-        let rules = self.slow.dictionary.clone();
-        let empty = rules.is_empty();
-        div()
-            .flex()
-            .flex_col()
-            .gap_6()
-            .child(title("Dictionary"))
-            .child({
-                let mut items: Vec<AnyElement> = rules
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, (heard, meant))| {
-                        row(("rule", i))
-                            .child(div().w(px(240.)).font_family(MONO).text_sm().text_color(rgb(p().slate)).child(heard))
-                            .child(div().font_family(MONO).text_sm().text_color(rgb(p().dim)).child("→"))
-                            .child(div().font_family(MONO).text_sm().text_color(rgb(p().ink)).child(meant))
-                            .into_any_element()
-                    })
-                    .collect();
-                if empty {
-                    items.push(row("rule-none").child(hint("None yet. e.g. a cappy bar => capybara")).into_any_element());
-                }
-                items.push(
-                    row("edit-dict")
-                        .cursor_pointer()
-                        .hover(|s| s.bg(alpha(p().ink, 0.035)))
-                        .on_click(|_, _, _| {
-                            let _ = std::process::Command::new("open").arg("-t").arg(store::dictionary_path()).spawn();
-                        })
-                        .child(div().text_size(px(15.)).text_color(rgb(p().gold)).child("Edit dictionary…"))
-                        .into_any_element(),
-                );
-                group(None, items, Some("heard => meant, one per line.".into()))
-            })
+        (done < steps.len()).then_some(setup_list)
     }
 
     fn settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1249,18 +1406,6 @@ impl Main {
         };
         let ink_row = |id: &'static str, text: String| row(id).child(div().flex_1().text_size(px(15.)).text_color(rgb(p().ink)).child(text));
 
-        // Microphone: a menu of mics, then keeping it ready.
-        let mic = group(
-            Some("Microphone"),
-            vec![
-                self.dropdown("mic", "Microphone", current_mic, None, rows, cx),
-                switch("ready", "Keep the mic ready", KEEP_MIC_READY.load(Ordering::Relaxed), |on| {
-                    KEEP_MIC_READY.store(on, Ordering::Relaxed);
-                    store::save_settings(&store::Settings { keep_mic_ready: on, ..store::load_settings() });
-                }),
-            ],
-            Some("Off: the mic light goes out between takes.".into()),
-        );
 
         // Push to talk.
         let recording = crate::hotkey::recording();
@@ -1286,13 +1431,33 @@ impl Main {
         } else {
             "fn opens emoji? Set Press 🌐 key to Do nothing."
         };
-        let talk = group(
-            Some("Push to talk"),
+        // The things people change, in one card at the top: how to talk, which model,
+        // which mic, and opening at login.
+        let (current_model, model_status, model_items) = self.model_menu();
+        let main = group(
+            None,
             vec![
                 ink_row("hold", "Hold fn, talk, let go".into()).child(label("fn")).into_any_element(),
                 key_row.into_any_element(),
+                self.dropdown("model", "Voice model", current_model, model_status, model_items, cx),
+                self.dropdown("mic", "Microphone", current_mic, None, rows, cx),
+                switch("login", "Open at login", self.slow.login, crate::login::set),
             ],
             Some(talk_footer.into()),
+        );
+        let dictation = group(
+            Some("Dictation"),
+            vec![
+                switch("ready", "Keep the mic ready", KEEP_MIC_READY.load(Ordering::Relaxed), |on| {
+                    KEEP_MIC_READY.store(on, Ordering::Relaxed);
+                    store::save_settings(&store::Settings { keep_mic_ready: on, ..store::load_settings() });
+                }),
+                switch("mute", "Mute the Mac while you talk", MUTE_WHILE_TALKING.load(Ordering::Relaxed), |on| {
+                    MUTE_WHILE_TALKING.store(on, Ordering::Relaxed);
+                    store::save_settings(&store::Settings { mute_while_talking: on, ..store::load_settings() });
+                }),
+            ],
+            Some("Mic ready off: the mic light goes out between takes.".into()),
         );
 
         // FX mic, only when there's one to talk about.
@@ -1354,24 +1519,19 @@ impl Main {
             None,
         );
 
-        let general = group(
-            Some("General"),
+        let output = group(
+            Some("Output"),
             vec![
-                switch("sounds", "Sounds", crate::sound::enabled(), |on| {
-                    crate::sound::set_enabled(on);
-                    store::save_settings(&store::Settings { sounds: on, ..store::load_settings() });
-                }),
-                switch("mute", "Mute the Mac while you talk", MUTE_WHILE_TALKING.load(Ordering::Relaxed), |on| {
-                    MUTE_WHILE_TALKING.store(on, Ordering::Relaxed);
-                    store::save_settings(&store::Settings { mute_while_talking: on, ..store::load_settings() });
-                }),
                 switch("words", "Live words above the dot", SHOW_WORDS.load(Ordering::Relaxed), |on| {
                     SHOW_WORDS.store(on, Ordering::Relaxed);
                     store::save_settings(&store::Settings { show_words: on, ..store::load_settings() });
                 }),
-                switch("login", "Open at login", self.slow.login, crate::login::set),
+                switch("sounds", "Sounds", crate::sound::enabled(), |on| {
+                    crate::sound::set_enabled(on);
+                    store::save_settings(&store::Settings { sounds: on, ..store::load_settings() });
+                }),
             ],
-            Some(concat!("Heyra ", env!("CARGO_PKG_VERSION")).into()),
+            None,
         );
 
         div()
@@ -1380,12 +1540,12 @@ impl Main {
             .gap(px(36.))
             .pb(px(24.))
             .child(title("Settings"))
-            .child(self.models(cx))
-            .child(mic)
-            .child(talk)
+            .child(main)
+            .child(dictation)
+            .child(output)
             .children(fx)
+            .child(self.models(cx))
             .child(appearance)
-            .child(general)
     }
 
     /// The mics to choose from, as menu rows, and the one chosen.
@@ -1635,7 +1795,7 @@ impl Render for Main {
         let page = match self.page {
             Page::Home => self.home(window, cx).into_any_element(),
             Page::History => self.history(cx).into_any_element(),
-            Page::Dictionary => self.dictionary().into_any_element(),
+            Page::Dictionary => self.dictionary(window, cx).into_any_element(),
             Page::Settings => self.settings(cx).into_any_element(),
         };
         // The sidebar springs between labels and an icon rail. Labels stay laid out and
@@ -1681,9 +1841,9 @@ impl Render for Main {
                             ),
                     )
                     .child(self.nav("nav-home", "icons/home.svg", "Home", Page::Home, shown, cx))
+                    .child(self.nav("nav-settings", "icons/settings.svg", "Settings", Page::Settings, shown, cx))
                     .child(self.nav("nav-history", "icons/history.svg", "History", Page::History, shown, cx))
-                    .child(self.nav("nav-dict", "icons/dictionary.svg", "Dictionary", Page::Dictionary, shown, cx))
-                    .child(self.nav("nav-settings", "icons/settings.svg", "Settings", Page::Settings, shown, cx)),
+                    .child(self.nav("nav-dict", "icons/dictionary.svg", "Dictionary", Page::Dictionary, shown, cx)),
             )
             .child(
                 div()
@@ -1699,7 +1859,26 @@ impl Render for Main {
                         Phase::Ready => "Ready · fn",
                         Phase::Error => "Check Home",
                     }).opacity(shown)))
-                    .child(label(short(&mic, 17)).text_color(rgb(p().dim)).whitespace_nowrap().opacity(shown)),
+                    .child(label(short(&mic, 17)).text_color(rgb(p().dim)).whitespace_nowrap().opacity(shown))
+                    // The version, and a way to check for a newer one now.
+                    .child(
+                        div()
+                            .pt_3()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .opacity(shown)
+                            .child(label(concat!("v", env!("CARGO_PKG_VERSION"))).text_color(rgb(p().dim)))
+                            .child({
+                                let state = self.state.clone();
+                                div()
+                                    .id("check-updates")
+                                    .cursor_pointer()
+                                    .child(label("Check for updates").text_color(rgb(p().slate)))
+                                    .hover(|d| d.opacity(0.7))
+                                    .on_click(move |_, _, _| crate::update::check_now(state.clone()))
+                            }),
+                    ),
             );
         let toggle = self
             .with_tip(div().id("rail-toggle"), "rail-toggle", if self.rail_open { "Hide sidebar" } else { "Show sidebar" }, Side::Right, cx)

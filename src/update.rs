@@ -23,6 +23,26 @@ pub fn start(state: Shared) {
     });
 }
 
+/// Check now, from the sidebar's button: says what it found either way.
+pub fn check_now(state: Shared) {
+    std::thread::spawn(move || {
+        let say = |title: &str, text: String| {
+            state.lock().unwrap().toast = Some((title.into(), text, Instant::now()));
+        };
+        match latest() {
+            None => say("Update", "Couldn't reach GitHub".into()),
+            Some(latest) if !newer(&latest, env!("CARGO_PKG_VERSION")) => {
+                say("Up to date", concat!("Heyra ", env!("CARGO_PKG_VERSION")).into())
+            }
+            Some(latest) if brew().is_some() => {
+                say("Update", format!("Getting Heyra {latest}"));
+                check(&state);
+            }
+            Some(latest) => say("Update", format!("Heyra {latest} is out")),
+        }
+    });
+}
+
 fn check(state: &Shared) {
     let Some(latest) = latest() else { return };
     if !newer(&latest, env!("CARGO_PKG_VERSION")) {
