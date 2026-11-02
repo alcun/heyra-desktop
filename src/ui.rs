@@ -1313,7 +1313,7 @@ impl Main {
             .flex_col()
             .gap_6()
             .child(title("Dictionary"))
-            .child(group(None, items, Some("Heyra writes the right-hand words whenever it hears the left. Case doesn't matter.".into())))
+            .child(group(None, items, Some("Case-insensitive. Saves as you type.".into())))
     }
 
     /// First-run setup, on General until every step is done.
@@ -1430,7 +1430,7 @@ impl Main {
                 d.child(button("choose", if chosen.is_some() { "Change" } else { "Add a key" }).on_click(|_, _, _| crate::hotkey::record(true)))
             });
         let talk_footer = if fn_free {
-            "Double-tap for hands-free. Esc cancels."
+            "Double-tap: hands-free. Esc: cancel."
         } else {
             "fn opens emoji? Set Press 🌐 key to Do nothing."
         };
@@ -1450,16 +1450,16 @@ impl Main {
         let dictation = group(
             Some("Dictation"),
             vec![
-                switch("ready", "Keep the mic ready", KEEP_MIC_READY.load(Ordering::Relaxed), |on| {
+                switch("ready", "Keep mic open", KEEP_MIC_READY.load(Ordering::Relaxed), |on| {
                     KEEP_MIC_READY.store(on, Ordering::Relaxed);
                     store::save_settings(&store::Settings { keep_mic_ready: on, ..store::load_settings() });
                 }),
-                switch("mute", "Mute the Mac while you talk", MUTE_WHILE_TALKING.load(Ordering::Relaxed), |on| {
+                switch("mute", "Mute audio while talking", MUTE_WHILE_TALKING.load(Ordering::Relaxed), |on| {
                     MUTE_WHILE_TALKING.store(on, Ordering::Relaxed);
                     store::save_settings(&store::Settings { mute_while_talking: on, ..store::load_settings() });
                 }),
             ],
-            Some("Mic ready off: the mic light goes out between takes.".into()),
+            None,
         );
 
         // FX mic, only when there's one to talk about.
@@ -1467,7 +1467,7 @@ impl Main {
             let line = match disk {
                 None if note.is_some() => None,
                 None => Some("Squeeze to talk. Bottom button: Enter. Middle: undo."),
-                Some(false) => Some("Plugged in. Setting up adds a script and four tones; its files are backed up first."),
+                Some(false) => Some("Adds a script and four tones. Backs up its files first."),
                 Some(true) => Some("Set up. Unplug it, press the button above its USB port, then squeeze."),
             };
             let state = self.state.clone();
@@ -1517,14 +1517,14 @@ impl Main {
         };
         let appearance = group(
             Some("Appearance"),
-            vec![look("look-dark", "Dark", 0), look("look-light", "Light", 1), look("look-auto", "Match the Mac", 2)],
+            vec![look("look-dark", "Dark", 0), look("look-light", "Light", 1), look("look-auto", "System", 2)],
             None,
         );
 
         let output = group(
             Some("Output"),
             vec![
-                switch("words", "Live words above the dot", SHOW_WORDS.load(Ordering::Relaxed), |on| {
+                switch("words", "Live preview", SHOW_WORDS.load(Ordering::Relaxed), |on| {
                     SHOW_WORDS.store(on, Ordering::Relaxed);
                     store::save_settings(&store::Settings { show_words: on, ..store::load_settings() });
                 }),
@@ -1904,7 +1904,7 @@ impl Render for Main {
         // and the page as a panel set into the window.
         // Top right: the look, as a menu.
         let now = APPEARANCE.load(Ordering::Relaxed);
-        let look_items: Vec<AnyElement> = [("look-dark", "icons/moon.svg", "Dark", 0u8), ("look-light", "icons/sun.svg", "Light", 1), ("look-auto", "icons/auto.svg", "Match the Mac", 2)]
+        let look_items: Vec<AnyElement> = [("look-dark", "icons/moon.svg", "Dark", 0u8), ("look-light", "icons/sun.svg", "Light", 1), ("look-auto", "icons/auto.svg", "System", 2)]
             .into_iter()
             .map(|(id, icon, text, value)| {
                 row(id)
