@@ -556,6 +556,8 @@ fn main() {
         // A take with nowhere to go, offered to copy: its window, when it was held, the click.
         let mut held: Option<(gpui::WindowHandle<ui::Held>, Instant)> = None;
         let held_clicked = std::rc::Rc::new(std::cell::Cell::new(false));
+        // Where the orb was last placed: when it moves, everything around it reopens there.
+        let mut placed_top = gpu_orb::ORB_TOP.load(std::sync::atomic::Ordering::Relaxed);
         cx.spawn(async move |cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(16)).await;
@@ -576,6 +578,32 @@ fn main() {
                             (px_ - cx_).hypot(py - cy) < 14.0
                         });
                     orb.tick(phase, level, hovering);
+                    let top = gpu_orb::ORB_TOP.load(std::sync::atomic::Ordering::Relaxed);
+                    if top != placed_top {
+                        placed_top = top;
+                        let close = |h: gpui::AnyWindowHandle, cx: &mut App| {
+                            let _ = h.update(cx, |_, window, _| window.remove_window());
+                        };
+                        if let Some((h, _)) = caption.take() {
+                            close(h.into(), cx);
+                            caption_shown = false;
+                        }
+                        if let Some((h, _)) = toast.take() {
+                            close(h.into(), cx);
+                        }
+                        if let Some(h) = hover_tip.take() {
+                            close(h.into(), cx);
+                        }
+                        if let Some((h, _)) = held.take() {
+                            close(h.into(), cx);
+                        }
+                        if let Some(h) = hotspot.take() {
+                            close(h.into(), cx);
+                        }
+                        for h in button_windows.drain(..) {
+                            close(h.into(), cx);
+                        }
+                    }
                     // Other apps put their own cursor back as the mouse moves: keep the hand.
                     if hovering {
                         ui::hand_cursor(true);
