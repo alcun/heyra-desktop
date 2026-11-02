@@ -332,20 +332,25 @@ fn finish(state: &Shared, engine: &crate::engine::Shared, ahead: Option<Ahead>, 
         state.lock().unwrap().toast = Some(("Didn't catch that".into(), String::new(), Instant::now()));
     }
     if !text.is_empty() {
+        // The app it went into, named only once it's really there.
+        let mut went_into = None;
         if paste && crate::paste::nowhere_to_type() {
             store::log("nowhere to paste: held to copy");
             let mut s = state.lock().unwrap();
             s.held = Some((text.clone(), Instant::now()));
             s.draft_until = None;
         } else if paste {
+            let app = crate::paste::frontmost_name();
             match crate::paste::paste(&text) {
-                Ok(()) => store::log("pasted"),
+                Ok(()) => {
+                    store::log("pasted");
+                    went_into = app;
+                }
                 Err(e) => store::log(&format!("paste failed: {e}")),
             }
         }
-        let app = crate::paste::frontmost_name().filter(|_| paste);
         let model = Some(state.lock().unwrap().model.name());
-        let entry = Entry { at: store::now(), text, secs, took, app, model };
+        let entry = Entry { at: store::now(), text, secs, took, app: went_into, model };
         store::append_history(&entry);
         state.lock().unwrap().history.push(entry);
     }

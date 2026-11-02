@@ -708,7 +708,9 @@ fn main() {
                     // The words so far, above the orb; redrawn only when they change.
                     if caption.is_none() && !draft.is_empty() && let Some(centre) = orb.centre() {
                         let view = ui::Caption { text: String::new(), closed: words_closed.clone() };
-                        caption = ui::open_caption(cx, centre, 140., view).map(|h| (h, String::new()));
+                        // Closer under the orb at the top: it hangs below the menu bar, not above the Dock.
+                        let above = if gpu_orb::ORB_TOP.load(std::sync::atomic::Ordering::Relaxed) { 96. } else { 140. };
+                        caption = ui::open_caption(cx, centre, above, view).map(|h| (h, String::new()));
                         if let Some((h, _)) = &caption {
                             let _ = h.update(cx, |_, window, _| ui::fade(window, false));
                         }
