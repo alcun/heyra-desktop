@@ -253,6 +253,29 @@ struct Mute {
     muted: bool,
 }
 
+/// What a take changed about the Mac's sound, kept on disk until it's put back, so a
+/// quit or crash mid-take is undone at the next start.
+fn sound_note() -> std::path::PathBuf {
+    store::dir().join("sound-to-restore.txt")
+}
+
+/// At start: put back sound a previous run changed and never restored.
+pub fn restore_sound_left_over() {
+    let Ok(note) = std::fs::read_to_string(sound_note()) else { return };
+    match note.trim() {
+        "muted" => {
+            crate::mics::mute_output(false);
+        }
+        v => {
+            if let Ok(v) = v.parse::<f32>() {
+                crate::mics::set_output_volume(v);
+            }
+        }
+    }
+    let _ = std::fs::remove_file(sound_note());
+    store::log("put back the sound a previous run left changed");
+}
+
 impl Mute {
     fn engage(&mut self, mode: u8) {
         if self.on {
@@ -261,10 +284,19 @@ impl Mute {
         self.on = true;
         if mode == 2 {
             // Only remembered if it was really turned down, so only that is put back.
-            self.was_volume = crate::mics::output_volume().filter(|v| crate::mics::set_output_volume(v * 0.2));
-        } else if let Some(was) = crate::mics::mute_output(true) {
-            self.was_muted = was;
-            self.muted = !was;
+            if let Some(v) = crate::mics::output_volume() {
+                let _ = std::fs::write(sound_note(), v.to_string());
+                self.was_volume = crate::mics::set_output_volume(v * 0.2).then_some(v);
+            }
+        } else {
+            let _ = std::fs::write(sound_note(), "muted");
+            if let Some(was) = crate::mics::mute_output(true) {
+                self.was_muted = was;
+                self.muted = !was;
+            }
+        }
+        if self.was_volume.is_none() && !self.muted {
+            let _ = std::fs::remove_file(sound_note());
         }
     }
 
@@ -278,6 +310,7 @@ impl Mute {
         if std::mem::take(&mut self.muted) {
             crate::mics::mute_output(false);
         }
+        let _ = std::fs::remove_file(sound_note());
     }
 }
 
@@ -446,6 +479,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
     let mut mute = Mute::default();
     MUTE_WHILE_TALKING.store(store::load_settings().mute_while_talking, Ordering::Relaxed);
     WHILE_TALKING.store(while_talking_from(&store::load_settings()), Ordering::Relaxed);
+    restore_sound_left_over();
     KEEP_MIC_READY.store(store::load_settings().keep_mic_ready, Ordering::Relaxed);
     SHOW_WORDS.store(store::load_settings().show_words, Ordering::Relaxed);
     // Microphones come and go: a new one is switched to, as other dictation apps do.

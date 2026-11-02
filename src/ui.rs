@@ -746,6 +746,7 @@ impl Main {
             .on_click(cx.listener(move |this, _, _, cx| {
                 if id != "look" {
                     this.menu = None;
+                    this.menu_closed = Some((id, Instant::now()));
                 }
                 cx.notify();
             }))
@@ -1699,7 +1700,11 @@ impl Main {
             .cursor_pointer()
             .hover(|s| s.bg(alpha(p().ink, 0.035)))
             .child(div().text_size(px(15.)).text_color(rgb(p().gold)).child("Use your own model…"))
-            .on_click(cx.listener(move |_, _, _, cx| {
+            .on_click(cx.listener(move |this, _, _, cx| {
+            // A click that just picked from a menu above this row isn't for this row.
+            if this.menu.is_some() || this.menu_closed.is_some_and(|(_, at)| at.elapsed() < Duration::from_millis(400)) {
+                return;
+            }
             let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
                 files: false,
                 directories: true,
