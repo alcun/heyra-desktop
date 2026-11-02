@@ -36,7 +36,7 @@ pub fn check_now(state: Shared) {
             }
             Some(latest) if brew().is_some() => {
                 say("Update", format!("Getting Heyra {latest}"));
-                check(&state);
+                upgrade(&state, latest);
             }
             Some(latest) => say("Update", format!("Heyra {latest} is out")),
         }
@@ -45,9 +45,13 @@ pub fn check_now(state: Shared) {
 
 fn check(state: &Shared) {
     let Some(latest) = latest() else { return };
-    if !newer(&latest, env!("CARGO_PKG_VERSION")) {
-        return;
+    if newer(&latest, env!("CARGO_PKG_VERSION")) {
+        upgrade(state, latest);
     }
+}
+
+/// `latest` is newer than this: upgrade through Homebrew, or say it's out.
+fn upgrade(state: &Shared, latest: String) {
     match brew() {
         Some(brew) => {
             store::log(&format!("update: {latest} is out, upgrading with Homebrew"));

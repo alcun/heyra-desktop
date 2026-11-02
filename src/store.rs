@@ -111,7 +111,12 @@ pub fn save_dictionary(rules: &[(String, String)]) {
     for (heard, meant) in rules.iter().filter(|(h, _)| !h.trim().is_empty()) {
         text.push_str(&format!("{} => {}\n", heard.trim(), meant.trim()));
     }
-    let _ = fs::write(dictionary_path(), text);
+    // Whole or not at all: a take reading it mid-save mustn't see half the rules.
+    let path = dictionary_path();
+    let temp = path.with_extension("txt.saving");
+    if fs::write(&temp, text).is_ok() {
+        let _ = fs::rename(&temp, &path);
+    }
 }
 
 /// Case-insensitive replace of whole phrases.
