@@ -505,6 +505,7 @@ fn main() {
             ui::open_main(cx, state.clone(), tx.clone());
         }
         let tray = tray::Tray::new();
+        let mut shown_model: Option<Option<&'static str>> = None;
         let main_state = state.clone();
         let main_tx = tx.clone();
 
@@ -706,8 +707,22 @@ fn main() {
                                 });
                             }
                         }
+                        Some(tray::Action::UseModel(id)) => {
+                            let _ = main_tx.send(Cmd::UseModel(model::Choice::Listed(id)));
+                        }
                         Some(tray::Action::Quit) => cx.quit(),
                         None => {}
+                    }
+                    // The tick follows the model in use, however it was chosen.
+                    if let Some(t) = &tray {
+                        let current = match &main_state.lock().unwrap().model {
+                            model::Choice::Listed(id) => Some(*id),
+                            model::Choice::Folder(_) => None,
+                        };
+                        if shown_model.as_ref() != Some(&current) {
+                            t.show_model(current);
+                            shown_model = Some(current);
+                        }
                     }
                     // Only the welcome window's orb needs a steady frame. The main window
                     // redraws itself on change; toasts animate themselves; the dot's

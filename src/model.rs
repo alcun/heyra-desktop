@@ -167,32 +167,70 @@ pub fn check_folder(dir: &Path) -> Result<(), String> {
     })
 }
 
-/// The four files sherpa-onnx needs for a transducer such as Parakeet.
-pub struct Files {
-    pub encoder: PathBuf,
-    pub decoder: PathBuf,
-    pub joiner: PathBuf,
-    pub tokens: PathBuf,
+/// The files a sherpa-onnx model needs, by kind.
+pub enum Files {
+    /// Parakeet and the models built on it.
+    Transducer { encoder: PathBuf, decoder: PathBuf, joiner: PathBuf, tokens: PathBuf },
+    Whisper { encoder: PathBuf, decoder: PathBuf, tokens: PathBuf },
+    Canary { encoder: PathBuf, decoder: PathBuf, tokens: PathBuf },
+    Moonshine { preprocessor: PathBuf, encoder: PathBuf, uncached: PathBuf, cached: PathBuf, tokens: PathBuf },
+    Qwen3 { frontend: PathBuf, encoder: PathBuf, decoder: PathBuf, tokenizer: PathBuf },
+    Cohere { encoder: PathBuf, decoder: PathBuf, tokens: PathBuf },
+    Ctc { model: PathBuf, tokens: PathBuf },
 }
 
-/// Find the model files in a folder: encoder*.onnx, decoder*.onnx, joiner*.onnx
-/// and tokens.txt. Where there's a choice, the int8 one.
+/// Find a model's files in a folder, whatever kind it is, from the folder's name
+/// (sherpa-onnx's archives say what they hold) and what's in it. Where there's a
+/// choice, the int8 one.
 pub fn files(dir: &Path) -> Result<Files, String> {
     let names: Vec<String> = fs::read_dir(dir)
         .map_err(|e| format!("couldn't open {}: {e}", dir.display()))?
         .filter_map(|e| e.ok()?.file_name().into_string().ok())
         .collect();
     let pick = |part: &str| -> Result<PathBuf, String> {
-        let mut found: Vec<&String> =
-            names.iter().filter(|n| n.starts_with(part) && n.ends_with(".onnx")).collect();
-        found.sort_by_key(|n| !n.contains("int8"));
+        let mut found: Vec<&String> = names.iter().filter(|n| n.contains(part) && n.ends_with(".onnx")).collect();
+        found.sort_by_key(|n| (!n.contains("int8"), n.len()));
         found.first().map(|n| dir.join(n)).ok_or_else(|| format!("no {part}.onnx in {}", dir.display()))
     };
-    let tokens = dir.join("tokens.txt");
-    if !tokens.is_file() {
-        return Err(format!("no tokens.txt in {}", dir.display()));
-    }
-    Ok(Files { encoder: pick("encoder")?, decoder: pick("decoder")?, joiner: pick("joiner")?, tokens })
+    let tokens = || {
+        names
+            .iter()
+            .find(|n| n.ends_with("tokens.txt"))
+            .map(|n| dir.join(n))
+            .ok_or_else(|| format!("no tokens.txt in {}", dir.display()))
+    };
+    let name = dir.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let has = |part: &str| names.iter().any(|n| n.contains(part));
+    Ok(if has("joiner") {
+        Files::Transducer { encoder: pick("encoder")?, decoder: pick("decoder")?, joiner: pick("joiner")?, tokens: tokens()? }
+    } else if name.contains("whisper") {
+        Files::Whisper { encoder: pick("encoder")?, decoder: pick("decoder")?, tokens: tokens()? }
+    } else if has("preprocess") {
+        Files::Moonshine {
+            preprocessor: pick("preprocess")?,
+            encoder: pick("encode")?,
+            uncached: pick("uncached")?,
+            cached: pick("cached_decode")?,
+            tokens: tokens()?,
+        }
+    } else if has("conv_frontend") {
+        let tokenizer = dir.join("tokenizer");
+        if !tokenizer.is_dir() {
+            return Err(format!("no tokenizer folder in {}", dir.display()));
+        }
+        Files::Qwen3 { frontend: pick("conv_frontend")?, encoder: pick("encoder")?, decoder: pick("decoder")?, tokenizer }
+    } else if name.contains("cohere") {
+        Files::Cohere { encoder: pick("encoder")?, decoder: pick("decoder")?, tokens: tokens()? }
+    } else if has("encoder") {
+        Files::Canary { encoder: pick("encoder")?, decoder: pick("decoder")?, tokens: tokens()? }
+    } else {
+        Files::Ctc { model: pick("model")?, tokens: tokens()? }
+    })
+}
+
+/// The Mac's first language, two letters, for models that need telling.
+pub fn mac_language() -> Option<String> {
+    first_language().map(|l| l.chars().take(2).collect())
 }
 
 fn models_dir() -> PathBuf {

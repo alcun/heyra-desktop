@@ -1,4 +1,4 @@
-//! Speech engines. A sherpa-onnx transducer (Parakeet, Bark) runs anywhere
+//! Speech engines. A sherpa-onnx model (Parakeet, Bark, Whisper and the rest) runs anywhere
 //! (macOS, Windows, Linux); an Apple engine can slot in later behind the same trait.
 
 use std::path::Path;
@@ -18,22 +18,71 @@ fn lock(engine: &Shared) -> MutexGuard<'_, Box<dyn Engine>> {
     engine.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// A NeMo transducer through sherpa-onnx: Parakeet TDT 0.6B v3 and the models built on it.
+/// A sherpa-onnx model of any kind Heyra knows: Parakeet and the models built on it,
+/// Whisper, Canary, Moonshine, Qwen3-ASR, Cohere Transcribe and NeMo CTC.
 pub struct Transducer(OfflineRecognizer);
 
 impl Transducer {
     pub fn load(dir: &Path) -> Result<Self, String> {
-        let files = crate::model::files(dir)?;
+        use crate::model::Files;
         let file = |path: &Path| Some(path.to_string_lossy().into_owned());
         let mut config = OfflineRecognizerConfig::default();
-        config.model_config.transducer = OfflineTransducerModelConfig {
-            encoder: file(&files.encoder),
-            decoder: file(&files.decoder),
-            joiner: file(&files.joiner),
+        let m = &mut config.model_config;
+        // Models that need a language: the Mac's, where the model has it, else English.
+        let language = |offered: &[&str]| {
+            let mac = crate::model::mac_language().unwrap_or_default();
+            Some(if offered.contains(&mac.as_str()) { mac } else { "en".into() })
         };
-        config.model_config.tokens = file(&files.tokens);
-        config.model_config.model_type = Some("nemo_transducer".into());
-        config.model_config.num_threads = 4;
+        match crate::model::files(dir)? {
+            Files::Transducer { encoder, decoder, joiner, tokens } => {
+                m.transducer = OfflineTransducerModelConfig { encoder: file(&encoder), decoder: file(&decoder), joiner: file(&joiner) };
+                m.tokens = file(&tokens);
+                m.model_type = Some("nemo_transducer".into());
+            }
+            Files::Whisper { encoder, decoder, tokens } => {
+                m.whisper.encoder = file(&encoder);
+                m.whisper.decoder = file(&decoder);
+                // Empty: Whisper works out the language itself.
+                m.whisper.language = Some(String::new());
+                m.whisper.task = Some("transcribe".into());
+                m.tokens = file(&tokens);
+            }
+            Files::Canary { encoder, decoder, tokens } => {
+                m.canary.encoder = file(&encoder);
+                m.canary.decoder = file(&decoder);
+                m.canary.src_lang = language(&["en", "de", "es", "fr"]);
+                m.canary.tgt_lang = m.canary.src_lang.clone();
+                m.canary.use_pnc = true;
+                m.tokens = file(&tokens);
+            }
+            Files::Moonshine { preprocessor, encoder, uncached, cached, tokens } => {
+                m.moonshine.preprocessor = file(&preprocessor);
+                m.moonshine.encoder = file(&encoder);
+                m.moonshine.uncached_decoder = file(&uncached);
+                m.moonshine.cached_decoder = file(&cached);
+                m.tokens = file(&tokens);
+            }
+            Files::Qwen3 { frontend, encoder, decoder, tokenizer } => {
+                m.qwen3_asr.conv_frontend = file(&frontend);
+                m.qwen3_asr.encoder = file(&encoder);
+                m.qwen3_asr.decoder = file(&decoder);
+                m.qwen3_asr.tokenizer = file(&tokenizer);
+                m.qwen3_asr.max_new_tokens = 512;
+            }
+            Files::Cohere { encoder, decoder, tokens } => {
+                m.cohere_transcribe.encoder = file(&encoder);
+                m.cohere_transcribe.decoder = file(&decoder);
+                m.cohere_transcribe.language =
+                    language(&["en", "fr", "de", "es", "it", "pt", "nl", "pl", "el", "ar", "ja", "zh", "vi", "ko"]);
+                m.cohere_transcribe.use_punct = true;
+                m.tokens = file(&tokens);
+            }
+            Files::Ctc { model, tokens } => {
+                m.nemo_ctc.model = file(&model);
+                m.tokens = file(&tokens);
+            }
+        }
+        m.num_threads = 4;
         config.decoding_method = Some("greedy_search".into());
         OfflineRecognizer::create(&config)
             .map(Self)

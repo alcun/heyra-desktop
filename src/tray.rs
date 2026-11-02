@@ -1,18 +1,21 @@
 //! The menu bar icon: Heyra lives here, not in the Dock.
 
-use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 pub struct Tray {
     _icon: TrayIcon,
     open: MenuItem,
     paste_last: MenuItem,
+    /// Voice model: one tick per listed model.
+    models: Vec<(&'static str, CheckMenuItem)>,
     quit: MenuItem,
 }
 
 pub enum Action {
     Open,
     PasteLast,
+    UseModel(&'static str),
     Quit,
 }
 
@@ -45,15 +48,21 @@ impl Tray {
         let open = MenuItem::new("Open Heyra", true, None);
         let paste_last = MenuItem::new("Paste last take", true, None);
         let quit = MenuItem::new("Quit Heyra", true, None);
+        let voice = Submenu::new("Voice model", true);
+        let models: Vec<(&'static str, CheckMenuItem)> =
+            crate::model::ALL.iter().map(|m| (m.id, CheckMenuItem::new(m.name, true, false, None))).collect();
+        for (_, item) in &models {
+            voice.append(item).ok()?;
+        }
         let menu = Menu::new();
-        menu.append_items(&[&open, &paste_last, &PredefinedMenuItem::separator(), &quit]).ok()?;
+        menu.append_items(&[&open, &paste_last, &voice, &PredefinedMenuItem::separator(), &quit]).ok()?;
         let icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_icon_templated(mark())
             .with_tooltip("Heyra: hold fn and talk")
             .build()
             .ok()?;
-        Some(Self { _icon: icon, open, paste_last, quit })
+        Some(Self { _icon: icon, open, paste_last, models, quit })
     }
 
     pub fn poll(&self) -> Option<Action> {
@@ -65,7 +74,14 @@ impl Tray {
         } else if event.id == *self.quit.id() {
             Some(Action::Quit)
         } else {
-            None
+            self.models.iter().find(|(_, item)| event.id == *item.id()).map(|(id, _)| Action::UseModel(id))
+        }
+    }
+
+    /// Tick the model in use (none for a folder of your own).
+    pub fn show_model(&self, current: Option<&str>) {
+        for (id, item) in &self.models {
+            item.set_checked(current == Some(*id));
         }
     }
 }
