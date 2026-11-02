@@ -449,7 +449,14 @@ impl Render for Onboarding {
                     this.state.lock().unwrap().toast =
                         Some(("Ready".into(), "Hold fn anywhere".into(), Instant::now()));
                     window.remove_window();
-                    crate::ui::open_main(cx, this.state.clone(), this.cmds.clone());
+                    // Bring Home forward, opening it only if it isn't already.
+                    match cx.windows().into_iter().find_map(|w| w.downcast::<crate::ui::Main>()) {
+                        Some(w) => {
+                            let _ = w.update(cx, |_, window, _| window.activate_window());
+                        }
+                        None => crate::ui::open_main(cx, this.state.clone(), this.cmds.clone()),
+                    }
+                    cx.activate(true);
                 }
             }
             cx.notify();

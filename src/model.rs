@@ -222,14 +222,21 @@ pub fn files(dir: &Path) -> Result<Files, String> {
     let has = |part: &str| names.iter().any(|n| n.contains(part));
     Ok(if has("joiner") {
         Files::Transducer { encoder: pick("encoder")?, decoder: pick("decoder")?, joiner: pick("joiner")?, tokens: tokens()? }
-    } else if name.contains("whisper") {
+    // Whisper's files carry its size as a prefix: turbo-encoder, small.en-decoder.
+    } else if name.contains("whisper") || has("-encoder") {
         Files::Whisper { encoder: pick("encoder")?, decoder: pick("decoder")?, tokens: tokens()? }
     } else if has("preprocess") {
         Files::Moonshine {
             preprocessor: pick("preprocess")?,
             encoder: pick("encode")?,
             uncached: pick("uncached")?,
-            cached: pick("cached_decode")?,
+            // "cached_decode" is inside "uncached_decode" too: match it as a prefix.
+            cached: names
+                .iter()
+                .filter(|n| n.starts_with("cached_decode") && n.ends_with(".onnx"))
+                .min_by_key(|n| (!n.contains("int8"), n.len()))
+                .map(|n| dir.join(n))
+                .ok_or_else(|| format!("no cached_decode.onnx in {}", dir.display()))?,
             tokens: tokens()?,
         }
     } else if has("conv_frontend") {
@@ -238,7 +245,8 @@ pub fn files(dir: &Path) -> Result<Files, String> {
             return Err(format!("no tokenizer folder in {}", dir.display()));
         }
         Files::Qwen3 { frontend: pick("conv_frontend")?, encoder: pick("encoder")?, decoder: pick("decoder")?, tokenizer }
-    } else if name.contains("cohere") {
+    // Cohere's encoder is too big for one file: its weights sit beside it in .onnx.data.
+    } else if name.contains("cohere") || has(".onnx.data") {
         Files::Cohere { encoder: pick("encoder")?, decoder: pick("decoder")?, tokens: tokens()? }
     } else if has("encoder") {
         Files::Canary { encoder: pick("encoder")?, decoder: pick("decoder")?, tokens: tokens()? }
