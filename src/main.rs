@@ -150,6 +150,8 @@ struct OrbDriver {
     motion: gpu_orb::Motion,
     /// The resting dot never changes, so it's drawn once and left alone.
     rested: bool,
+    /// Where the overlay is: under the menu bar, or above the Dock.
+    top: bool,
 }
 
 /// The app bundle this is running from, if a different version has been put in its place.
@@ -179,12 +181,14 @@ const HOVER_SCALE: f32 = 0.3;
 
 impl OrbDriver {
     fn new() -> Self {
+        gpu_orb::ORB_TOP.store(store::load_settings().orb_top, std::sync::atomic::Ordering::Relaxed);
         let overlay = gpu_orb::Overlay::new().map_err(|e| store::log(&format!("orb: {e}"))).ok();
         Self {
             overlay,
             last: std::time::Instant::now(),
             motion: gpu_orb::Motion::new(IDLE_SCALE),
             rested: false,
+            top: gpu_orb::ORB_TOP.load(std::sync::atomic::Ordering::Relaxed),
         }
     }
 
@@ -197,6 +201,12 @@ impl OrbDriver {
 
     fn tick(&mut self, phase: Phase, level: f32, hovering: bool) {
         let Some(overlay) = self.overlay.as_mut() else { return };
+        let top = gpu_orb::ORB_TOP.load(std::sync::atomic::Ordering::Relaxed);
+        if top != self.top {
+            self.top = top;
+            overlay.place(top);
+            self.rested = false;
+        }
         let now = std::time::Instant::now();
         let dt = now.duration_since(self.last).as_secs_f32().min(0.1);
         self.last = now;

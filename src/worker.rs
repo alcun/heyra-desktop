@@ -229,6 +229,17 @@ pub static KEEP_MIC_READY: AtomicBool = AtomicBool::new(true);
 
 /// The Settings switch for muting the Mac while a take records.
 pub static MUTE_WHILE_TALKING: AtomicBool = AtomicBool::new(false);
+/// While a take records: 0 leave the sound, 1 mute it, 2 turn it down to a fifth.
+pub static WHILE_TALKING: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+pub fn while_talking_from(settings: &store::Settings) -> u8 {
+    match settings.while_talking.as_deref() {
+        Some("mute") => 1,
+        Some("lower") => 2,
+        Some(_) => 0,
+        None => settings.mute_while_talking as u8,
+    }
+}
 
 /// The Mac's sound, muted for a take and put back as it was.
 #[derive(Default)]
@@ -236,18 +247,33 @@ struct Mute {
     on: bool,
     /// It was already muted, so leave it muted after.
     was_muted: bool,
+    /// Turned down rather than muted: the volume to put back.
+    was_volume: Option<f32>,
 }
 
 impl Mute {
-    fn engage(&mut self) {
-        if !self.on {
-            self.on = true;
+    fn engage(&mut self, mode: u8) {
+        if self.on {
+            return;
+        }
+        self.on = true;
+        if mode == 2 {
+            self.was_volume = crate::mics::output_volume();
+            if let Some(v) = self.was_volume {
+                crate::mics::set_output_volume(v * 0.2);
+            }
+        } else {
             self.was_muted = crate::mics::mute_output(true).unwrap_or(true);
         }
     }
 
     fn restore(&mut self) {
-        if std::mem::take(&mut self.on) && !self.was_muted {
+        if !std::mem::take(&mut self.on) {
+            return;
+        }
+        if let Some(v) = self.was_volume.take() {
+            crate::mics::set_output_volume(v);
+        } else if !self.was_muted {
             crate::mics::mute_output(false);
         }
     }
@@ -412,6 +438,7 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
     let mut last_tap: Option<Instant> = None;
     let mut mute = Mute::default();
     MUTE_WHILE_TALKING.store(store::load_settings().mute_while_talking, Ordering::Relaxed);
+    WHILE_TALKING.store(while_talking_from(&store::load_settings()), Ordering::Relaxed);
     KEEP_MIC_READY.store(store::load_settings().keep_mic_ready, Ordering::Relaxed);
     SHOW_WORDS.store(store::load_settings().show_words, Ordering::Relaxed);
     // Microphones come and go: a new one is switched to, as other dictation apps do.
@@ -617,8 +644,9 @@ pub fn run(state: Shared, cmds: Receiver<Cmd>) {
             }
         }
         // A tap never mutes; a take that's really talking does.
-        if recording && MUTE_WHILE_TALKING.load(Ordering::Relaxed) && pressed_at.elapsed() > TAP {
-            mute.engage();
+        let mode = WHILE_TALKING.load(Ordering::Relaxed);
+        if recording && mode != 0 && pressed_at.elapsed() > TAP {
+            mute.engage(mode);
         } else if !recording {
             mute.restore();
         }

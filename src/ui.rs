@@ -1469,10 +1469,25 @@ impl Main {
                     KEEP_MIC_READY.store(on, Ordering::Relaxed);
                     store::save_settings(&store::Settings { keep_mic_ready: on, ..store::load_settings() });
                 }),
-                switch("mute", "Mute audio while talking", MUTE_WHILE_TALKING.load(Ordering::Relaxed), |on| {
-                    MUTE_WHILE_TALKING.store(on, Ordering::Relaxed);
-                    store::save_settings(&store::Settings { mute_while_talking: on, ..store::load_settings() });
-                }),
+                {
+                    let now = crate::worker::WHILE_TALKING.load(Ordering::Relaxed);
+                    let names = ["Do nothing", "Mute", "Lower volume"];
+                    let items = self.choices("talking", &names, now as usize, |i| {
+                        crate::worker::WHILE_TALKING.store(i as u8, Ordering::Relaxed);
+                        let value = ["nothing", "mute", "lower"][i].to_string();
+                        store::save_settings(&store::Settings { while_talking: Some(value), ..store::load_settings() });
+                    }, cx);
+                    self.dropdown("talking", "While dictating", names[now as usize].into(), None, items, cx)
+                },
+                {
+                    let top = crate::gpu_orb::ORB_TOP.load(Ordering::Relaxed);
+                    let names = ["Bottom", "Top"];
+                    let items = self.choices("orb-spot", &names, top as usize, |i| {
+                        crate::gpu_orb::ORB_TOP.store(i == 1, Ordering::Relaxed);
+                        store::save_settings(&store::Settings { orb_top: i == 1, ..store::load_settings() });
+                    }, cx);
+                    self.dropdown("orb-spot", "Orb", names[top as usize].into(), None, items, cx)
+                },
             ],
             None,
         );
@@ -1563,6 +1578,43 @@ impl Main {
             .child(output)
             .children(fx)
             .child(appearance)
+    }
+
+    /// A dropdown's options as menu rows, the current one marked; `pick` gets the index.
+    fn choices(&self, id: &'static str, names: &[&'static str], current: usize, pick: fn(usize), cx: &mut Context<Self>) -> Vec<AnyElement> {
+        names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let selected = i == current;
+                div()
+                    .id((id, i))
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .min_h(px(46.))
+                    .py(px(11.))
+                    .px(px(12.))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(alpha(p().ink, 0.035)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        pick(i);
+                        this.menu = None;
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .flex_none()
+                            .size(px(9.))
+                            .rounded_full()
+                            .border_1()
+                            .border_color(rgb(if selected { p().gold } else { p().dim }))
+                            .when(selected, |d| d.bg(rgb(p().gold))),
+                    )
+                    .child(div().flex_1().text_size(px(15.)).text_color(rgb(if selected { p().ink } else { p().slate })).child(*name))
+                    .into_any_element()
+            })
+            .collect()
     }
 
     /// The mics to choose from, as menu rows, and the one chosen.
@@ -2055,7 +2107,7 @@ const ORB_BUTTON: f32 = 22.;
 
 /// Opens a button just off the sphere's upper edge: `side` -1 for left, 1 for right.
 pub fn open_orb_button(cx: &mut App, centre: (f64, f64), side: f64, button: OrbButton) -> Option<gpui::WindowHandle<OrbButton>> {
-    open_popup(cx, (centre.0 + 33. * side, centre.1 - 33.), ORB_BUTTON, button)
+    open_popup(cx, (centre.0 + 33. * side, centre.1 - lift(33.) as f64), ORB_BUTTON, button)
 }
 
 impl Render for OrbButton {
@@ -2096,12 +2148,17 @@ const TOAST_HEIGHT: f32 = 30.;
 const TOAST_MARGIN: f32 = 36.;
 
 /// `above`: how far above the dot's centre the pill sits.
+/// Toasts, words and the copy card go above the orb, or below it when it's at the top.
+fn lift(above: f32) -> f32 {
+    if crate::gpu_orb::ORB_TOP.load(Ordering::Relaxed) { -above } else { above }
+}
+
 pub fn open_toast(cx: &mut App, centre: (f64, f64), above: f32, toast: Toast) -> Option<gpui::WindowHandle<Toast>> {
     // Generous for the sans at this size; the pill itself sizes to its words.
     let chars = (toast.lead.chars().count() + toast.text.chars().count() + toast.key.map_or(0, |k| k.len() + 4)) as f32;
     let width = chars * 7.4 + 70. + TOAST_MARGIN * 2.;
     let height = TOAST_HEIGHT + TOAST_MARGIN * 2.;
-    let origin = point(px(centre.0 as f32 - width / 2.), px(centre.1 as f32 - above - height / 2.));
+    let origin = point(px(centre.0 as f32 - width / 2.), px(centre.1 as f32 - lift(above) - height / 2.));
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds { origin, size: size(px(width), px(height)) })),
@@ -2230,7 +2287,7 @@ const CAPTION_HEIGHT: f32 = 120.;
 /// `above`: how far above the orb's centre the caption's middle sits.
 pub fn open_caption(cx: &mut App, centre: (f64, f64), above: f32, caption: Caption) -> Option<gpui::WindowHandle<Caption>> {
     let (width, height) = (CAPTION_WIDTH + TOAST_MARGIN * 2., CAPTION_HEIGHT + TOAST_MARGIN * 2.);
-    let origin = point(px(centre.0 as f32 - width / 2.), px(centre.1 as f32 - above - height / 2.));
+    let origin = point(px(centre.0 as f32 - width / 2.), px(centre.1 as f32 - lift(above) - height / 2.));
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds { origin, size: size(px(width), px(height)) })),
@@ -2343,7 +2400,7 @@ const HELD_HEIGHT: f32 = 64.;
 
 pub fn open_held(cx: &mut App, centre: (f64, f64), above: f32, held: Held) -> Option<gpui::WindowHandle<Held>> {
     let (width, height) = (HELD_WIDTH + TOAST_MARGIN * 2., HELD_HEIGHT + TOAST_MARGIN * 2.);
-    let origin = point(px(centre.0 as f32 - width / 2.), px(centre.1 as f32 - above - height / 2.));
+    let origin = point(px(centre.0 as f32 - width / 2.), px(centre.1 as f32 - lift(above) - height / 2.));
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds { origin, size: size(px(width), px(height)) })),

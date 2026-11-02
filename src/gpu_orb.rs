@@ -280,18 +280,34 @@ pub struct Overlay {
 
 const SIZE: f64 = 120.0;
 
+/// Where the orb sits: under the menu bar, or (the default) above the Dock.
+pub static ORB_TOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The panel's frame for the orb's spot on the main screen, in Cocoa's bottom-left points.
+unsafe fn spot(top: bool) -> NSRect {
+    let screen = unsafe { NSScreen::mainScreen(nil) };
+    let frame = unsafe { NSScreen::visibleFrame(screen) }; // excludes the Dock and menu bar
+    let x = frame.origin.x + (frame.size.width - SIZE) / 2.0;
+    let y = if top { frame.origin.y + frame.size.height - SIZE - 6.0 } else { frame.origin.y + 18.0 };
+    NSRect::new(NSPoint::new(x, y), NSSize::new(SIZE, SIZE))
+}
+
+/// The centre of a frame, in top-left screen points (GPUI's coordinates).
+unsafe fn centre_of(rect: NSRect) -> (f64, f64) {
+    let screens: id = unsafe { msg_send![class!(NSScreen), screens] };
+    let primary: id = unsafe { msg_send![screens, objectAtIndex: 0u64] };
+    let top = unsafe { NSScreen::frame(primary) }.size.height;
+    (rect.origin.x + SIZE / 2.0, top - (rect.origin.y + SIZE / 2.0))
+}
+
 impl Overlay {
     /// Must be called on the main thread.
     pub fn new() -> Result<Self, String> {
         let gpu = Gpu::new()?;
         unsafe {
             let screen = NSScreen::mainScreen(nil);
-            let frame = NSScreen::visibleFrame(screen); // excludes the Dock and menu bar
             let scale: f64 = msg_send![screen, backingScaleFactor];
-            let rect = NSRect::new(
-                NSPoint::new(frame.origin.x + (frame.size.width - SIZE) / 2.0, frame.origin.y + 18.0),
-                NSSize::new(SIZE, SIZE),
-            );
+            let rect = spot(ORB_TOP.load(std::sync::atomic::Ordering::Relaxed));
             let style = NSWindowStyleMask::NSBorderlessWindowMask.bits() | (1 << 7); // non-activating panel
             let panel: id = msg_send![class!(NSPanel), alloc];
             let panel: id = msg_send![panel,
@@ -319,11 +335,17 @@ impl Overlay {
             let view: id = msg_send![panel, contentView];
             view.setWantsLayer(YES);
             let _: () = msg_send![view, setLayer: layer.as_ref() as *const _ as id];
-            let primary: id = msg_send![class!(NSScreen), screens];
-            let primary: id = msg_send![primary, objectAtIndex: 0u64];
-            let top = NSScreen::frame(primary).size.height;
-            let centre = (rect.origin.x + SIZE / 2.0, top - (rect.origin.y + SIZE / 2.0));
+            let centre = centre_of(rect);
             Ok(Self { panel, centre, layer, gpu, pixels: SIZE * scale, visible: false })
+        }
+    }
+
+    /// Move to the top or bottom spot.
+    pub fn place(&mut self, top: bool) {
+        unsafe {
+            let rect = spot(top);
+            let _: () = msg_send![self.panel, setFrame: rect display: YES];
+            self.centre = centre_of(rect);
         }
     }
 

@@ -116,6 +116,23 @@ pub fn mute_output(on: bool) -> Option<bool> {
     (status == 0).then_some(was != 0)
 }
 
+/// The Mac's output volume, 0 to 1, or None if it can't be read this way.
+pub fn output_volume() -> Option<f32> {
+    let device: u32 = get(SYSTEM, code(b"dOut"))?;
+    let address = Address { selector: code(b"vmvc"), scope: code(b"outp"), element: 0 };
+    let mut volume = 0f32;
+    let mut size = 4;
+    let status = unsafe { AudioObjectGetPropertyData(device, &address, 0, std::ptr::null(), &mut size, &mut volume as *mut f32 as *mut _) };
+    (status == 0).then_some(volume)
+}
+
+pub fn set_output_volume(volume: f32) -> bool {
+    let Some(device) = get::<u32>(SYSTEM, code(b"dOut")) else { return false };
+    let address = Address { selector: code(b"vmvc"), scope: code(b"outp"), element: 0 };
+    let value = volume.clamp(0.0, 1.0);
+    unsafe { AudioObjectSetPropertyData(device, &address, 0, std::ptr::null(), 4, &value as *const f32 as *const _) == 0 }
+}
+
 #[cfg(test)]
 mod tests {
     /// Touches the real speakers, so run by hand: cargo test -- --ignored mute

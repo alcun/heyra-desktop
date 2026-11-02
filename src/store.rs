@@ -223,6 +223,12 @@ pub struct Settings {
     /// Mute the Mac's sound output while a take is recording.
     #[serde(default)]
     pub mute_while_talking: bool,
+    /// While a take records: "nothing", "mute" or "lower". Unset: from `mute_while_talking`.
+    #[serde(default)]
+    pub while_talking: Option<String>,
+    /// The orb sits under the menu bar instead of above the Dock.
+    #[serde(default)]
+    pub orb_top: bool,
     /// The welcome window has been shown.
     #[serde(default)]
     pub onboarded: bool,
@@ -259,7 +265,7 @@ fn yes() -> bool {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { mic: None, keep_last_clip: false, login_offered: false, button: None, sounds: true, mute_while_talking: false, onboarded: false, keep_mic_ready: true, show_words: true, sidebar_narrow: false, appearance: None, last_version: None, update_offered: None, model: None, model_folder: None }
+        Self { mic: None, keep_last_clip: false, login_offered: false, button: None, sounds: true, mute_while_talking: false, while_talking: None, orb_top: false, onboarded: false, keep_mic_ready: true, show_words: true, sidebar_narrow: false, appearance: None, last_version: None, update_offered: None, model: None, model_folder: None }
     }
 }
 
