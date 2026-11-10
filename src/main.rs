@@ -519,8 +519,11 @@ fn main() {
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None), KeyBinding::new("cmd-w", CloseWindow, None)]);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.on_action(|_: &CloseWindow, cx| {
+            // Deferred: during key dispatch GPUI holds the window, so updating it here fails.
             if let Some(w) = cx.active_window() {
-                let _ = w.update(cx, |_, window, _| window.remove_window());
+                cx.defer(move |cx| {
+                    let _ = w.update(cx, |_, window, _| window.remove_window());
+                });
             }
         });
         let _ = cx.text_system().add_fonts(vec![

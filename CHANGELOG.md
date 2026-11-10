@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1
+
+- ⌘Q quits Heyra and ⌘W closes the window. Before, neither key did anything.
+
 ## 0.6.0
 
 - Parakeet v2 joins the voice models: English, best of all on meetings and calls on
